@@ -1,0 +1,12 @@
+{
+  "notes": [
+    { "time": 0.4, "column": 0 },
+    { "time": 0.6, "column": 1 },
+    { "time": 0.8, "column": 2 },
+    { "time": 1.0, "column": 3 },
+    { "time": 1.2, "column": 0 },
+    { "time": 1.4, "column": 1 },
+    { "time": 1.6, "column": 2 },
+    { "time": 1.8, "column": 3 }
+  ]
+}
