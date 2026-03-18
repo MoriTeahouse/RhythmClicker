@@ -50,4 +50,4 @@ dotnet run --project RhythmClicker/ClickerGame.csproj -c Debug
 10) 聯絡與支援
 - 請透過 Issue 提問或送 PR，維護者會在收到變更請求後回覆。
 
-謝謝你的貢獻！
+
