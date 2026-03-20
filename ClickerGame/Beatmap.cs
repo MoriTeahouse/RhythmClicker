@@ -1,0 +1,23 @@
+using System;
+using System.Collections.Generic;
+using System.Text.Json;
+
+namespace ClickerGame
+{
+    public class Beatmap
+    {
+        public List<Note> Notes { get; set; } = new();
+
+        public static Beatmap LoadFromString(string s)
+        {
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            return JsonSerializer.Deserialize<Beatmap>(s, options) ?? new Beatmap();
+        }
+    }
+
+    public class Note
+    {
+        public float Time { get; set; }
+        public int Column { get; set; }
+    }
+}

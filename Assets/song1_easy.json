@@ -1,9 +1,76 @@
 {
-  "notes": [
-    { "time": 0.5, "column": 0 },
-    { "time": 0.75, "column": 1 },
-    { "time": 1.0, "column": 2 },
-    { "time": 1.25, "column": 3 },
-    { "time": 1.75, "column": 0 }
+  "Notes": [
+    {
+      "Time": 0.3524795,
+      "Column": 3
+    },
+    {
+      "Time": 0.5187928,
+      "Column": 0
+    },
+    {
+      "Time": 0.5187928,
+      "Column": 1
+    },
+    {
+      "Time": 0.5187928,
+      "Column": 2
+    },
+    {
+      "Time": 0.6335468,
+      "Column": 3
+    },
+    {
+      "Time": 0.6826872,
+      "Column": 0
+    },
+    {
+      "Time": 0.6826872,
+      "Column": 2
+    },
+    {
+      "Time": 0.7071472,
+      "Column": 1
+    },
+    {
+      "Time": 0.7071472,
+      "Column": 3
+    },
+    {
+      "Time": 0.8191227,
+      "Column": 2
+    },
+    {
+      "Time": 0.9540296,
+      "Column": 0
+    },
+    {
+      "Time": 1.0664496,
+      "Column": 3
+    },
+    {
+      "Time": 1.0782768,
+      "Column": 1
+    },
+    {
+      "Time": 1.1191262,
+      "Column": 2
+    },
+    {
+      "Time": 1.3191235,
+      "Column": 0
+    },
+    {
+      "Time": 1.4025949,
+      "Column": 2
+    },
+    {
+      "Time": 1.4025949,
+      "Column": 3
+    },
+    {
+      "Time": 1.4262186,
+      "Column": 1
+    }
   ]
 }
