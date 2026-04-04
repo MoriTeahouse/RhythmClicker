@@ -290,14 +290,24 @@ namespace ClickerGame
                     string safeId = (imported.Name ?? "osu_import").Trim().ToLowerInvariant().Replace(' ', '_');
                     if (string.IsNullOrEmpty(safeId)) safeId = "osu_import_" + DateTime.Now.Ticks;
 
-                    // Copy audio file if exists alongside .osu
+                    // Copy audio file if exists alongside .osu (convert to WAV if needed)
                     string osuDir = Path.GetDirectoryName(f) ?? ".";
                     string audioSrc = Path.Combine(osuDir, imported.AudioFile ?? "");
-                    string audioDest = "";
+                    string wavName = "";
                     if (!string.IsNullOrEmpty(imported.AudioFile) && File.Exists(audioSrc))
                     {
-                        audioDest = Path.Combine("Assets", imported.AudioFile);
-                        if (!File.Exists(audioDest)) File.Copy(audioSrc, audioDest, false);
+                        wavName = Path.GetFileNameWithoutExtension(imported.AudioFile) + ".wav";
+                        string audioDest = Path.Combine("Assets", wavName);
+                        if (!File.Exists(audioDest))
+                        {
+                            string ext2 = Path.GetExtension(audioSrc).ToLowerInvariant();
+                            if (ext2 == ".wav") File.Copy(audioSrc, audioDest, false);
+                            else
+                            {
+                                try { OsuImporter.ConvertToWavPublic(audioSrc, audioDest); }
+                                catch { wavName = ""; }
+                            }
+                        }
                     }
 
                     // Save as .rcm
@@ -305,7 +315,7 @@ namespace ClickerGame
                     RcFileManager.WriteBeatmap(rcmPath, imported);
 
                     // Add to songs.json
-                    string audioFile = !string.IsNullOrEmpty(audioDest) ? imported.AudioFile! : "song1.wav";
+                    string audioFile = !string.IsNullOrEmpty(wavName) ? wavName : "song1.wav";
                     if (!songs.Any(s => s.Id == safeId))
                     {
                         songs.Add(new SongInfo { Id = safeId, Title = imported.Name ?? safeId,
@@ -499,8 +509,19 @@ namespace ClickerGame
             notes = new LinkedList<Note>(beatmap.Notes ?? new List<Note>());
             maxScore = (beatmap?.Notes?.Count ?? 0) * 100;
             songInstance?.Stop(); songInstance?.Dispose(); songEffect = null;
-            using (var fs = File.OpenRead(songFilePath))
-            { songEffect = SoundEffect.FromStream(fs); songInstance = songEffect.CreateInstance(); }
+            try
+            {
+                using (var fs = File.OpenRead(songFilePath))
+                { songEffect = SoundEffect.FromStream(fs); songInstance = songEffect.CreateInstance(); }
+            }
+            catch
+            {
+                // Audio file is not WAV or corrupted — generate fallback
+                float dur = (beatmap?.Notes?.Count > 0) ? beatmap.Notes.Max(n => n.Time) + 2f : 6f;
+                GenerateMusicalWav(songFilePath, dur, beatmap?.Bpm ?? 120f);
+                using (var fs = File.OpenRead(songFilePath))
+                { songEffect = SoundEffect.FromStream(fs); songInstance = songEffect.CreateInstance(); }
+            }
             songDurationSeconds = songEffect?.Duration.TotalSeconds ?? 0.0;
         }
 
@@ -511,8 +532,18 @@ namespace ClickerGame
             notes = new LinkedList<Note>(beatmap.Notes ?? new List<Note>());
             maxScore = (beatmap?.Notes?.Count ?? 0) * 100;
             songInstance?.Stop(); songInstance?.Dispose(); songEffect = null;
-            using (var fs = File.OpenRead(songFilePath))
-            { songEffect = SoundEffect.FromStream(fs); songInstance = songEffect.CreateInstance(); }
+            try
+            {
+                using (var fs = File.OpenRead(songFilePath))
+                { songEffect = SoundEffect.FromStream(fs); songInstance = songEffect.CreateInstance(); }
+            }
+            catch
+            {
+                float dur = (beatmap?.Notes?.Count > 0) ? beatmap.Notes.Max(n => n.Time) + 2f : 6f;
+                GenerateMusicalWav(songFilePath, dur, beatmap?.Bpm ?? 120f);
+                using (var fs = File.OpenRead(songFilePath))
+                { songEffect = SoundEffect.FromStream(fs); songInstance = songEffect.CreateInstance(); }
+            }
             songDurationSeconds = songEffect?.Duration.TotalSeconds ?? 0.0;
         }
 

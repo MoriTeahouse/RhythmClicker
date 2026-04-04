@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using NAudio.Wave;
+using NAudio.Vorbis;
 
 namespace ClickerGame
 {
@@ -45,17 +47,21 @@ namespace ClickerGame
                     if (bracketStart >= 0 && bracketEnd > bracketStart)
                         diffLabel = fname.Substring(bracketStart + 1, bracketEnd - bracketStart - 1).Trim();
 
-                    // Copy audio once
+                    // Copy audio once (convert to WAV if needed)
                     if (audioFileCopied == null && !string.IsNullOrEmpty(bm.AudioFile))
                     {
                         string audioSrc = Path.Combine(tempDir, bm.AudioFile);
                         if (File.Exists(audioSrc))
                         {
-                            string audioDest = Path.Combine(assetsDir, bm.AudioFile);
-                            if (!File.Exists(audioDest)) File.Copy(audioSrc, audioDest, false);
-                            audioFileCopied = bm.AudioFile;
+                            string wavName = Path.GetFileNameWithoutExtension(bm.AudioFile) + ".wav";
+                            string audioDest = Path.Combine(assetsDir, wavName);
+                            if (!File.Exists(audioDest))
+                                ConvertToWav(audioSrc, audioDest);
+                            audioFileCopied = wavName;
                         }
                     }
+                    // Update AudioFile to the WAV name for all beatmaps
+                    if (audioFileCopied != null) bm.AudioFile = audioFileCopied;
 
                     results.Add((bm, diffLabel));
                 }
@@ -224,6 +230,53 @@ namespace ClickerGame
 
             notes.Sort((a, b) => a.Time.CompareTo(b.Time));
             return notes;
+        }
+
+        /// <summary>Convert any audio format (MP3, OGG, WAV, etc.) to 16-bit PCM WAV.</summary>
+        public static void ConvertToWavPublic(string inputPath, string outputPath) => ConvertToWav(inputPath, outputPath);
+
+        static void ConvertToWav(string inputPath, string outputPath)
+        {
+            string ext = Path.GetExtension(inputPath).ToLowerInvariant();
+            WaveStream reader;
+            if (ext == ".ogg")
+                reader = new VorbisWaveReader(inputPath);
+            else if (ext == ".mp3")
+                reader = new Mp3FileReader(inputPath);
+            else if (ext == ".wav")
+            {
+                File.Copy(inputPath, outputPath, false);
+                return;
+            }
+            else
+                reader = new AudioFileReader(inputPath);
+
+            using (reader)
+            {
+                // Convert to 16-bit PCM WAV (required by MonoGame SoundEffect.FromStream)
+                var targetFormat = new WaveFormat(44100, 16, reader.WaveFormat.Channels);
+                if (reader.WaveFormat.Encoding == WaveFormatEncoding.IeeeFloat ||
+                    reader.WaveFormat.BitsPerSample != 16 ||
+                    reader.WaveFormat.SampleRate != 44100)
+                {
+                    try
+                    {
+                        using var resampler = new MediaFoundationResampler(reader, targetFormat);
+                        WaveFileWriter.CreateWaveFile(outputPath, resampler);
+                    }
+                    catch
+                    {
+                        // Fallback: manual sample conversion
+                        reader.Position = 0;
+                        var sampleProvider = reader.ToSampleProvider();
+                        WaveFileWriter.CreateWaveFile16(outputPath, sampleProvider);
+                    }
+                }
+                else
+                {
+                    WaveFileWriter.CreateWaveFile(outputPath, reader);
+                }
+            }
         }
 
         struct OsuHitObject

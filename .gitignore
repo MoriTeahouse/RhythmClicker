@@ -26,6 +26,8 @@ Desktop.ini
 
 # Generated WAV files
 Assets/*.wav
+Assets/*.mp3
+Assets/*.ogg
 ClickerGame/Assets/*.wav
 
 # Accounts data (contains user credentials)
