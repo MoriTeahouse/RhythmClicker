@@ -22,6 +22,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Assets\\**\\*.*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Icons\\*.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="icon.ico" />
   </ItemGroup>
 </Project>

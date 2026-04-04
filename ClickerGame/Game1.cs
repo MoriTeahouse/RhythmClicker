@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Win32;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
@@ -278,6 +279,9 @@ namespace ClickerGame
 
             // File drop for editor audio import
             Window.FileDrop += OnFileDrop;
+
+            // Register custom file type icons
+            RegisterFileAssociations();
 
             base.Initialize();
         }
@@ -2837,6 +2841,53 @@ namespace ClickerGame
                 catch { }
             });
         }
+
+        /// <summary>Register .rcm / .rcp / .rc file associations with custom icons (HKCU, no admin).</summary>
+        static void RegisterFileAssociations()
+        {
+            try
+            {
+                // For single-file publish, the actual exe is the host process
+                string? exePath = Environment.ProcessPath;
+                if (string.IsNullOrEmpty(exePath)) exePath = Process.GetCurrentProcess().MainModule?.FileName;
+                if (string.IsNullOrEmpty(exePath)) return;
+                string baseDir = Path.GetDirectoryName(exePath)!;
+                string iconsDir = Path.Combine(baseDir, "Icons");
+                if (!Directory.Exists(iconsDir)) return;
+
+                var associations = new (string ext, string progId, string desc, string icoFile)[]
+                {
+                    (".rcm", "RhythmClicker.Beatmap",  "RhythmClicker Beatmap",  "file_rcm.ico"),
+                    (".rcp", "RhythmClicker.Replay",   "RhythmClicker Replay",   "file_rcp.ico"),
+                    (".rc",  "RhythmClicker.Data",     "RhythmClicker Data",     "file_rc.ico"),
+                };
+
+                foreach (var (ext, progId, desc, icoFile) in associations)
+                {
+                    string icoPath = Path.Combine(iconsDir, icoFile);
+                    if (!File.Exists(icoPath)) continue;
+
+                    // HKCU\Software\Classes\.ext → ProgId
+                    using var extKey = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{ext}");
+                    extKey?.SetValue("", progId);
+
+                    // HKCU\Software\Classes\ProgId
+                    using var progKey = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{progId}");
+                    progKey?.SetValue("", desc);
+
+                    // DefaultIcon
+                    using var iconKey = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{progId}\DefaultIcon");
+                    iconKey?.SetValue("", $"\"{icoPath}\",0");
+                }
+
+                // Notify shell of changes
+                SHChangeNotify(0x08000000, 0x0000, IntPtr.Zero, IntPtr.Zero);
+            }
+            catch { /* non-critical */ }
+        }
+
+        [System.Runtime.InteropServices.DllImport("shell32.dll")]
+        static extern void SHChangeNotify(int wEventId, int uFlags, IntPtr dwItem1, IntPtr dwItem2);
 
         // ═══════════ Profile ═══════════
         void UpdateProfile()
