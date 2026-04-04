@@ -39,6 +39,8 @@ Assets/.audio_v*
 
 # Published builds
 publish/
+*.zip
+*.exe
 
 # tmp_repo (development scratch)
 tmp_repo/

@@ -37,9 +37,9 @@ namespace ClickerGame
         string currentDifficulty = "easy";
 
         // Menu / scene
-        enum GameState { Menu, Playing, Result, Account, Language, Stats, BeatmapEditor }
+        enum GameState { Menu, Playing, Result, Account, Language, Stats, BeatmapEditor, Settings, Achievements, ReplayView }
         GameState state = GameState.Menu;
-        string[] menuKeys = new[] { "menu_start", "menu_editor", "menu_stats", "menu_account", "menu_language", "menu_exit" };
+        string[] menuKeys = new[] { "menu_start", "menu_editor", "menu_stats", "menu_settings", "menu_achievements", "menu_account", "menu_language", "menu_exit" };
         int currentMenuIndex = 0;
 
         // Language selection
@@ -91,6 +91,26 @@ namespace ClickerGame
         // Systems
         StatsDatabase? statsDb;
         DiscordRpcManager? discordRpc;
+        SettingsManager? settingsManager;
+        AchievementManager? achievementManager;
+        ReplayManager? replayManager;
+
+        // Settings UI state
+        int settingsMenuIndex = 0;
+        bool settingsBindingMode = false;
+        int settingsBindingLane = -1;
+
+        // Achievement popup
+        float achievementPopupTimer = 0f;
+        string achievementPopupText = "";
+
+        // Replay playback state
+        ReplayData? replayData;
+        int replayEventIndex;
+        List<JudgmentPopup> replayJudgments = new();
+
+        // Achievements screen scroll
+        int achievementsScrollIndex = 0;
 
         // Difficulty abbreviation mapping
         static readonly Dictionary<string, string> DiffAbbrev = new()
@@ -205,9 +225,51 @@ namespace ClickerGame
 
         void OnFileDrop(object? sender, FileDropEventArgs e)
         {
-            if (state != GameState.BeatmapEditor || e.Files == null || e.Files.Length == 0) return;
+            if (e.Files == null || e.Files.Length == 0) return;
             string f = e.Files[0];
             string ext = Path.GetExtension(f).ToLowerInvariant();
+
+            // osu! file import (works from menu or editor)
+            if (ext == ".osu")
+            {
+                try
+                {
+                    var imported = OsuImporter.Import(f);
+                    string safeId = (imported.Name ?? "osu_import").Trim().ToLowerInvariant().Replace(' ', '_');
+                    if (string.IsNullOrEmpty(safeId)) safeId = "osu_import_" + DateTime.Now.Ticks;
+
+                    // Copy audio file if exists alongside .osu
+                    string osuDir = Path.GetDirectoryName(f) ?? ".";
+                    string audioSrc = Path.Combine(osuDir, imported.AudioFile ?? "");
+                    string audioDest = "";
+                    if (!string.IsNullOrEmpty(imported.AudioFile) && File.Exists(audioSrc))
+                    {
+                        audioDest = Path.Combine("Assets", imported.AudioFile);
+                        if (!File.Exists(audioDest)) File.Copy(audioSrc, audioDest, false);
+                    }
+
+                    // Save as .rcm
+                    string rcmPath = Path.Combine("Assets", safeId + "_easy.rcm");
+                    RcFileManager.WriteBeatmap(rcmPath, imported);
+
+                    // Add to songs.json
+                    string audioFile = !string.IsNullOrEmpty(audioDest) ? imported.AudioFile! : "song1.wav";
+                    if (!songs.Any(s => s.Id == safeId))
+                    {
+                        songs.Add(new SongInfo { Id = safeId, Title = imported.Name ?? safeId,
+                            File = audioFile, Difficulties = new List<string> { "easy" } });
+                        var opts = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+                        File.WriteAllText("Assets/songs.json", System.Text.Json.JsonSerializer.Serialize(songs, opts));
+                        currentSongIndex = songs.Count - 1;
+                        currentDifficulty = "easy";
+                        LoadCurrentSong();
+                    }
+                }
+                catch { }
+                return;
+            }
+
+            if (state != GameState.BeatmapEditor) return;
             if (ext == ".wav" || ext == ".ogg" || ext == ".mp3")
             {
                 edAudioPath = f;
@@ -265,6 +327,9 @@ namespace ClickerGame
             LoadCurrentSong();
             accountsManager = new AccountsManager();
             statsDb = new StatsDatabase();
+            settingsManager = new SettingsManager();
+            achievementManager = new AchievementManager();
+            replayManager = new ReplayManager();
 
             // Discord RPC
             try { discordRpc = new DiscordRpcManager(); }
@@ -278,7 +343,7 @@ namespace ClickerGame
                 menuMusicEffect = SoundEffect.FromStream(fs);
                 menuMusicInstance = menuMusicEffect.CreateInstance();
                 menuMusicInstance.IsLooped = true;
-                menuMusicInstance.Volume = 0.35f;
+                menuMusicInstance.Volume = settingsManager?.Settings.MusicVolume ?? 0.35f;
             }
             menuMusicInstance.Play();
         }
@@ -440,7 +505,9 @@ namespace ClickerGame
                     menuMusicInstance?.Play(); discordRpc?.SetMenu();
                 }
                 else if (state == GameState.Account || state == GameState.Language
-                      || state == GameState.Stats || state == GameState.BeatmapEditor)
+                      || state == GameState.Stats || state == GameState.BeatmapEditor
+                      || state == GameState.Settings || state == GameState.Achievements
+                      || state == GameState.ReplayView)
                 {
                     if (state == GameState.BeatmapEditor)
                     { edPreviewInstance?.Stop(); edPreviewing = false; }
@@ -461,7 +528,14 @@ namespace ClickerGame
                 case GameState.Stats: break; // stats is just display
                 case GameState.BeatmapEditor: UpdateEditor(gameTime); break;
                 case GameState.Playing: UpdatePlaying(gameTime); break;
+                case GameState.Settings: UpdateSettings(); break;
+                case GameState.Achievements: UpdateAchievements(); break;
+                case GameState.ReplayView: UpdateReplayView(gameTime); break;
             }
+
+            // Achievement popup timer
+            if (achievementPopupTimer > 0)
+                achievementPopupTimer -= (float)gameTime.ElapsedGameTime.TotalSeconds;
 
             prevKb = kb;
             prevMouseState = mouseState;
@@ -531,6 +605,17 @@ namespace ClickerGame
                     cachedRecent = statsDb?.GetRecentPlays(user, 8);
                     discordRpc?.SetStats();
                 }
+                else if (key == "menu_settings")
+                {
+                    state = GameState.Settings;
+                    settingsMenuIndex = 0;
+                    settingsBindingMode = false;
+                }
+                else if (key == "menu_achievements")
+                {
+                    state = GameState.Achievements;
+                    achievementsScrollIndex = 0;
+                }
                 else if (key == "menu_account")
                 {
                     state = GameState.Account;
@@ -559,11 +644,18 @@ namespace ClickerGame
 
         void UpdateResult()
         {
-            if (kb.IsKeyDown(Keys.Up) && !prevKb.IsKeyDown(Keys.Up)) resultMenuIndex = (resultMenuIndex - 1 + 2) % 2;
-            if (kb.IsKeyDown(Keys.Down) && !prevKb.IsKeyDown(Keys.Down)) resultMenuIndex = (resultMenuIndex + 1) % 2;
+            if (kb.IsKeyDown(Keys.Up) && !prevKb.IsKeyDown(Keys.Up)) resultMenuIndex = (resultMenuIndex - 1 + 3) % 3;
+            if (kb.IsKeyDown(Keys.Down) && !prevKb.IsKeyDown(Keys.Down)) resultMenuIndex = (resultMenuIndex + 1) % 3;
             if (kb.IsKeyDown(Keys.Enter) && !prevKb.IsKeyDown(Keys.Enter))
             {
                 if (resultMenuIndex == 0) StartPlaying(false);
+                else if (resultMenuIndex == 1)
+                {
+                    // Watch replay
+                    string songId = songs.Count > 0 ? songs[currentSongIndex].Id : "unknown";
+                    var replay = replayManager?.GetBestReplay(songId, currentDifficulty);
+                    if (replay != null) StartReplayView(replay);
+                }
                 else { state = GameState.Menu; ExitBorderlessFullscreen(); menuMusicInstance?.Play(); discordRpc?.SetMenu(); }
             }
         }
@@ -571,7 +663,9 @@ namespace ClickerGame
         void UpdatePlaying(GameTime gameTime)
         {
             float time = (float)stopwatch.Elapsed.TotalSeconds;
-            Keys[] keys = { Keys.D, Keys.F, Keys.J, Keys.K };
+            float offset = (settingsManager?.Settings.OffsetMs ?? 0) / 1000f;
+            float adjTime = time + offset;
+            Keys[] keys = GetLaneKeys();
 
             for (int c = 0; c < 4; c++)
             {
@@ -590,7 +684,7 @@ namespace ClickerGame
                         {
                             var n = node.Value;
                             if (n.Column != c) continue;
-                            float dt = Math.Abs(n.Time - time);
+                            float dt = Math.Abs(n.Time - adjTime);
                             if (dt <= 0.30f && dt < best) { best = dt; nearest = n; nearestNode = node; }
                         }
                         if (nearestNode != null)
@@ -603,11 +697,13 @@ namespace ClickerGame
 
                             score += pts; combo++; hitCount++;
                             if (combo > maxCombo) maxCombo = combo;
-                            sfxHit?.Play(Math.Clamp(0.5f + combo * 0.005f, 0.5f, 0.9f), Math.Clamp(combo * 0.015f, 0f, 0.8f), 0f);
+                            float sfxVol = (settingsManager?.Settings.SfxVolume ?? 0.8f);
+                            sfxHit?.Play(Math.Clamp(0.5f + combo * 0.005f, 0.5f, 0.9f) * sfxVol, Math.Clamp(combo * 0.015f, 0f, 0.8f), 0f);
                             shakeTimer = 0.06f; shakeIntensity = Math.Clamp(1f + combo * 0.05f, 1f, 4f);
                             judgmentPopups.Add(new JudgmentPopup { Text = jText, Color = jColor, Timer = 0.6f,
                                 Position = new Vector2(LaneLeft + c * LaneWidth + LaneWidth / 2, HitZoneY - 30) });
                             SpawnHitParticles(c);
+                            replayManager?.RecordEvent(adjTime, c, jText, pts, combo);
                         }
                     }
                     int lx = LaneLeft + c * LaneWidth + 4;
@@ -645,6 +741,26 @@ namespace ClickerGame
                 string songId = songs.Count > 0 ? songs[currentSongIndex].Id : "unknown";
                 statsDb?.RecordPlay(accountsManager?.LoggedInUser ?? "guest",
                     songId, currentDifficulty, score, maxCombo, hitCount, missCount, acc, resultGrade);
+
+                // Save replay
+                replayManager?.StopRecording(songId, currentDifficulty,
+                    accountsManager?.LoggedInUser ?? "guest",
+                    score, maxCombo, hitCount, missCount, acc, resultGrade);
+
+                // Check achievements
+                bool isFC = missCount == 0 && hitCount > 0;
+                var summary = statsDb?.GetSummary(accountsManager?.LoggedInUser);
+                int totalPlays = summary?.TotalPlays ?? 1;
+                int uniqueSongs = GetUniqueSongsPlayed();
+                achievementManager?.CheckAfterPlay(totalPlays, maxCombo, resultGrade, acc, isFC, uniqueSongs, songs.Count);
+
+                // Show achievement popups
+                if (achievementManager != null && achievementManager.PendingPopups.Count > 0)
+                {
+                    var ach = achievementManager.PendingPopups.Dequeue();
+                    achievementPopupText = Localization.Get(ach.NameKey);
+                    achievementPopupTimer = 4f;
+                }
             }
 
             // Shake, pulse, particles, judgments, miss detection
@@ -659,14 +775,16 @@ namespace ClickerGame
             for (int i = judgmentPopups.Count - 1; i >= 0; i--)
             { var j = judgmentPopups[i]; j.Timer -= dt2; j.Position = new Vector2(j.Position.X, j.Position.Y - 45f * dt2); if (j.Timer <= 0) judgmentPopups.RemoveAt(i); }
 
-            float pTime = (float)stopwatch.Elapsed.TotalSeconds;
+            float pTime = (float)stopwatch.Elapsed.TotalSeconds + offset;
             for (var mN = notes.First; mN != null;)
             {
                 var nxt = mN.Next;
                 if (pTime - mN.Value.Time > GameConfig.ApproachTime + 0.75f)
                 {
                     int col = mN.Value.Column; notes.Remove(mN); combo = 0; missCount++;
-                    sfxMiss?.Play(0.35f, 0f, 0f);
+                    float sfxVol = (settingsManager?.Settings.SfxVolume ?? 0.8f);
+                    sfxMiss?.Play(0.35f * sfxVol, 0f, 0f);
+                    replayManager?.RecordEvent(pTime, col, "MISS", 0, 0);
                     if (keyFlashPool != null)
                     { var k = keyFlashPool.Rent(); k.Reset(new Rectangle(LaneLeft + col * LaneWidth + 4, HitZoneY, LaneWidth - 8, HitZoneHeight), Color.Red, GameConfig.MissFlashDuration); keyFlashes.Add(k); }
                 }
@@ -891,7 +1009,13 @@ namespace ClickerGame
             LoadCurrentSong();
             EnterBorderlessFullscreen();
             menuMusicInstance?.Stop();
-            stopwatch.Restart(); songInstance?.Stop(); songInstance?.Play();
+            replayManager?.StartRecording();
+            stopwatch.Restart(); songInstance?.Stop();
+            if (songInstance != null)
+            {
+                songInstance.Volume = settingsManager?.Settings.MusicVolume ?? 0.7f;
+                songInstance.Play();
+            }
 
             string title = songs.Count > 0 ? songs[currentSongIndex].Title : "Unknown";
             discordRpc?.SetPlaying(title, DiffShort(currentDifficulty));
@@ -954,7 +1078,25 @@ namespace ClickerGame
                 case GameState.Language: DrawLanguage(); break;
                 case GameState.Stats: DrawStats(); break;
                 case GameState.BeatmapEditor: DrawEditor(); break;
+                case GameState.Settings: DrawSettings(); break;
+                case GameState.Achievements: DrawAchievements(); break;
+                case GameState.ReplayView: DrawReplayView(); break;
             }
+
+            // Achievement popup overlay
+            if (achievementPopupTimer > 0 && !string.IsNullOrEmpty(achievementPopupText))
+            {
+                float alpha = Math.Min(achievementPopupTimer, 1f);
+                int popW = 320, popH = 50;
+                int popX = (width - popW) / 2, popY = 20;
+                spriteBatch.Draw(pixel!, new Rectangle(popX, popY, popW, popH), new Color(255, 220, 50) * (0.15f * alpha));
+                DrawRectBorder(new Rectangle(popX, popY, popW, popH), new Color(255, 220, 50) * (0.5f * alpha));
+                var achLabel = textRenderer!.GetTexture("🏆 " + Localization.Get("achievement_unlocked"), "Segoe UI", 11, new Color(255, 220, 50));
+                spriteBatch.Draw(achLabel, new Vector2(popX + (popW - achLabel.Width) / 2, popY + 6), Color.White * alpha);
+                var achName = textRenderer!.GetTexture(achievementPopupText, "Segoe UI", 15, Color.White);
+                spriteBatch.Draw(achName, new Vector2(popX + (popW - achName.Width) / 2, popY + 24), Color.White * alpha);
+            }
+
             spriteBatch.End();
             base.Draw(gameTime);
         }
@@ -984,7 +1126,8 @@ namespace ClickerGame
 
             for (int i = 0; i < LaneCount; i++)
             {
-                var label = textRenderer!.GetTexture(LaneKeys[i], "Segoe UI", 18, new Color(180, 180, 200));
+                var lkLabels = GetLaneKeyLabels();
+                var label = textRenderer!.GetTexture(lkLabels[i], "Segoe UI", 18, new Color(180, 180, 200));
                 spriteBatch.Draw(label, new Vector2(ll + i * LaneWidth + (LaneWidth - label.Width) / 2, hz + HitZoneHeight + 6), Color.White);
             }
 
@@ -1182,9 +1325,9 @@ namespace ClickerGame
 
             spriteBatch.Draw(pixel!, new Rectangle(cardX + 20, sy + lh * 5 + 6, cardW - 40, 1), Color.White * 0.08f);
 
-            string[] opts = { Localization.Get("retry"), Localization.Get("menu") };
+            string[] opts = { Localization.Get("retry"), Localization.Get("watch_replay"), Localization.Get("menu") };
             int oy = sy + lh * 5 + 16;
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < 3; i++)
             {
                 bool sel = i == resultMenuIndex;
                 int bx = cx - 70, by = oy + i * 32;
@@ -1483,6 +1626,444 @@ namespace ClickerGame
 
             var escHint = textRenderer!.GetTexture("Esc \u2190", "Segoe UI", 11, new Color(80, 80, 110));
             spriteBatch.Draw(escHint, new Vector2(width - escHint.Width - 12, height - 36), Color.White);
+        }
+
+        // ═══════════ Settings ═══════════
+
+        Keys[] GetLaneKeys()
+        {
+            if (settingsManager == null) return new[] { Keys.D, Keys.F, Keys.J, Keys.K };
+            var s = settingsManager.Settings;
+            return new[]
+            {
+                Enum.TryParse<Keys>(s.Lane0Key, true, out var k0) ? k0 : Keys.D,
+                Enum.TryParse<Keys>(s.Lane1Key, true, out var k1) ? k1 : Keys.F,
+                Enum.TryParse<Keys>(s.Lane2Key, true, out var k2) ? k2 : Keys.J,
+                Enum.TryParse<Keys>(s.Lane3Key, true, out var k3) ? k3 : Keys.K,
+            };
+        }
+
+        string[] GetLaneKeyLabels()
+        {
+            var keys = GetLaneKeys();
+            return keys.Select(k => k.ToString()).ToArray();
+        }
+
+        void UpdateSettings()
+        {
+            var s = settingsManager!.Settings;
+            int itemCount = 8; // master, music, sfx, offset, lane0-3
+
+            if (settingsBindingMode)
+            {
+                // Waiting for key press
+                foreach (Keys k in Enum.GetValues(typeof(Keys)))
+                {
+                    if (k == Keys.None || k == Keys.Escape) continue;
+                    if (kb.IsKeyDown(k) && !prevKb.IsKeyDown(k))
+                    {
+                        string kn = k.ToString();
+                        switch (settingsBindingLane)
+                        {
+                            case 0: s.Lane0Key = kn; break;
+                            case 1: s.Lane1Key = kn; break;
+                            case 2: s.Lane2Key = kn; break;
+                            case 3: s.Lane3Key = kn; break;
+                        }
+                        settingsBindingMode = false;
+                        settingsManager.Save();
+                        return;
+                    }
+                }
+                return;
+            }
+
+            if (kb.IsKeyDown(Keys.Up) && !prevKb.IsKeyDown(Keys.Up))
+                settingsMenuIndex = (settingsMenuIndex - 1 + itemCount) % itemCount;
+            if (kb.IsKeyDown(Keys.Down) && !prevKb.IsKeyDown(Keys.Down))
+                settingsMenuIndex = (settingsMenuIndex + 1) % itemCount;
+
+            if (kb.IsKeyDown(Keys.Left) && !prevKb.IsKeyDown(Keys.Left))
+            {
+                switch (settingsMenuIndex)
+                {
+                    case 0: s.MasterVolume = Math.Max(0, s.MasterVolume - 0.05f); break;
+                    case 1: s.MusicVolume = Math.Max(0, s.MusicVolume - 0.05f); break;
+                    case 2: s.SfxVolume = Math.Max(0, s.SfxVolume - 0.05f); break;
+                    case 3: s.OffsetMs -= 5; break;
+                }
+                ApplyVolume();
+                settingsManager.Save();
+            }
+            if (kb.IsKeyDown(Keys.Right) && !prevKb.IsKeyDown(Keys.Right))
+            {
+                switch (settingsMenuIndex)
+                {
+                    case 0: s.MasterVolume = Math.Min(1, s.MasterVolume + 0.05f); break;
+                    case 1: s.MusicVolume = Math.Min(1, s.MusicVolume + 0.05f); break;
+                    case 2: s.SfxVolume = Math.Min(1, s.SfxVolume + 0.05f); break;
+                    case 3: s.OffsetMs += 5; break;
+                }
+                ApplyVolume();
+                settingsManager.Save();
+            }
+            if (kb.IsKeyDown(Keys.Enter) && !prevKb.IsKeyDown(Keys.Enter))
+            {
+                if (settingsMenuIndex >= 4 && settingsMenuIndex <= 7)
+                {
+                    settingsBindingMode = true;
+                    settingsBindingLane = settingsMenuIndex - 4;
+                }
+            }
+        }
+
+        void ApplyVolume()
+        {
+            if (menuMusicInstance != null && settingsManager != null)
+                menuMusicInstance.Volume = settingsManager.Settings.MusicVolume * settingsManager.Settings.MasterVolume;
+        }
+
+        void DrawSettings()
+        {
+            spriteBatch!.Draw(pixel!, new Rectangle(0, 0, width, height), Color.Black * 0.7f);
+            int cx = width / 2;
+            int cardW = 420, cardH = 400;
+            int cardX = cx - cardW / 2, cardY = (height - cardH) / 2;
+
+            spriteBatch.Draw(pixel!, new Rectangle(cardX, cardY, cardW, cardH), new Color(14, 14, 32) * 0.96f);
+            DrawRectBorder(new Rectangle(cardX, cardY, cardW, cardH), new Color(0, 200, 255) * 0.15f);
+
+            var title = textRenderer!.GetTexture(Localization.Get("settings_title"), "Segoe UI", 22, Color.White);
+            spriteBatch.Draw(title, new Vector2(cx - title.Width / 2, cardY + 14), Color.White);
+            spriteBatch.Draw(pixel!, new Rectangle(cardX + 20, cardY + 46, cardW - 40, 1), Color.White * 0.08f);
+
+            var s = settingsManager!.Settings;
+            int sy = cardY + 56, sx = cardX + 24, sw = cardW - 48;
+            int lh = 36;
+
+            // Volume sliders
+            DrawSettingsSlider(Localization.Get("master_volume"), s.MasterVolume, sy, sx, sw, settingsMenuIndex == 0);
+            DrawSettingsSlider(Localization.Get("music_volume"), s.MusicVolume, sy + lh, sx, sw, settingsMenuIndex == 1);
+            DrawSettingsSlider(Localization.Get("sfx_volume"), s.SfxVolume, sy + lh * 2, sx, sw, settingsMenuIndex == 2);
+
+            // Offset
+            bool selOffset = settingsMenuIndex == 3;
+            var offLabel = textRenderer!.GetTexture(Localization.Get("offset_ms"), "Segoe UI", 13,
+                selOffset ? Color.White : new Color(120, 120, 150));
+            spriteBatch.Draw(offLabel, new Vector2(sx, sy + lh * 3), Color.White);
+            var offVal = textRenderer!.GetTexture($"{s.OffsetMs}ms", "Segoe UI", 13,
+                selOffset ? new Color(0, 200, 255) : Color.White);
+            spriteBatch.Draw(offVal, new Vector2(sx + sw - offVal.Width, sy + lh * 3), Color.White);
+            if (selOffset)
+            {
+                spriteBatch.Draw(pixel!, new Rectangle(sx, sy + lh * 3 - 2, sw, 20), new Color(0, 200, 255) * 0.05f);
+                spriteBatch.Draw(pixel!, new Rectangle(sx, sy + lh * 3 - 2, 3, 20), new Color(0, 200, 255));
+            }
+
+            spriteBatch.Draw(pixel!, new Rectangle(cardX + 20, sy + lh * 4 - 4, cardW - 40, 1), Color.White * 0.08f);
+
+            // Key bindings
+            var bindTitle = textRenderer!.GetTexture(Localization.Get("key_bindings"), "Segoe UI", 14, new Color(0, 200, 255));
+            spriteBatch.Draw(bindTitle, new Vector2(sx, sy + lh * 4 + 4), Color.White);
+
+            string[] laneLabels = { "Lane 1", "Lane 2", "Lane 3", "Lane 4" };
+            string[] laneKeys = { s.Lane0Key, s.Lane1Key, s.Lane2Key, s.Lane3Key };
+            for (int i = 0; i < 4; i++)
+            {
+                int ky = sy + lh * 4 + 30 + i * 28;
+                bool sel = settingsMenuIndex == 4 + i;
+                bool binding = settingsBindingMode && settingsBindingLane == i;
+
+                var ll = textRenderer!.GetTexture(laneLabels[i], "Segoe UI", 13,
+                    sel ? Color.White : new Color(120, 120, 150));
+                spriteBatch.Draw(ll, new Vector2(sx, ky), Color.White);
+
+                string keyText = binding ? Localization.Get("press_key") : laneKeys[i];
+                Color keyColor = binding ? new Color(255, 220, 50) : sel ? new Color(0, 200, 255) : Color.White;
+                var kt = textRenderer!.GetTexture(keyText, "Segoe UI", 13, keyColor);
+                spriteBatch.Draw(kt, new Vector2(sx + sw - kt.Width, ky), Color.White);
+
+                if (sel)
+                {
+                    spriteBatch.Draw(pixel!, new Rectangle(sx, ky - 2, sw, 20), new Color(0, 200, 255) * 0.05f);
+                    spriteBatch.Draw(pixel!, new Rectangle(sx, ky - 2, 3, 20), new Color(0, 200, 255));
+                }
+            }
+
+            // Hint
+            var hint = textRenderer!.GetTexture(Localization.Get("hint_settings"), "Segoe UI", 11, new Color(80, 80, 110));
+            spriteBatch.Draw(hint, new Vector2(cx - hint.Width / 2, cardY + cardH - 22), Color.White);
+        }
+
+        void DrawSettingsSlider(string label, float value, int y, int x, int w, bool selected)
+        {
+            var lt = textRenderer!.GetTexture(label, "Segoe UI", 13,
+                selected ? Color.White : new Color(120, 120, 150));
+            spriteBatch!.Draw(lt, new Vector2(x, y), Color.White);
+
+            int barX = x + 160, barW = w - 200, barY = y + 5, barH = 8;
+            spriteBatch.Draw(pixel!, new Rectangle(barX, barY, barW, barH), Color.White * 0.08f);
+            int fillW = (int)(barW * Math.Clamp(value, 0, 1));
+            spriteBatch.Draw(pixel!, new Rectangle(barX, barY, fillW, barH),
+                selected ? new Color(0, 200, 255) : new Color(80, 180, 220));
+
+            var vt = textRenderer!.GetTexture($"{(int)(value * 100)}%", "Segoe UI", 12,
+                selected ? new Color(0, 200, 255) : Color.White);
+            spriteBatch.Draw(vt, new Vector2(x + w - vt.Width, y), Color.White);
+
+            if (selected)
+            {
+                spriteBatch.Draw(pixel!, new Rectangle(x, y - 2, w, 20), new Color(0, 200, 255) * 0.05f);
+                spriteBatch.Draw(pixel!, new Rectangle(x, y - 2, 3, 20), new Color(0, 200, 255));
+            }
+        }
+
+        // ═══════════ Achievements ═══════════
+
+        void UpdateAchievements()
+        {
+            var all = achievementManager?.GetAll();
+            if (all == null) return;
+            int count = all.Count;
+            if (kb.IsKeyDown(Keys.Up) && !prevKb.IsKeyDown(Keys.Up))
+                achievementsScrollIndex = Math.Max(0, achievementsScrollIndex - 1);
+            if (kb.IsKeyDown(Keys.Down) && !prevKb.IsKeyDown(Keys.Down))
+                achievementsScrollIndex = Math.Min(count - 1, achievementsScrollIndex + 1);
+        }
+
+        void DrawAchievements()
+        {
+            spriteBatch!.Draw(pixel!, new Rectangle(0, 0, width, height), Color.Black * 0.7f);
+            int cx = width / 2;
+            int cardW = 440, cardH = 420;
+            int cardX = cx - cardW / 2, cardY = (height - cardH) / 2;
+
+            spriteBatch.Draw(pixel!, new Rectangle(cardX, cardY, cardW, cardH), new Color(14, 14, 32) * 0.96f);
+            DrawRectBorder(new Rectangle(cardX, cardY, cardW, cardH), new Color(255, 220, 50) * 0.15f);
+
+            var title = textRenderer!.GetTexture(Localization.Get("achievements_title"), "Segoe UI", 22, Color.White);
+            spriteBatch.Draw(title, new Vector2(cx - title.Width / 2, cardY + 14), Color.White);
+
+            // Progress
+            int unlocked = achievementManager?.UnlockedCount ?? 0;
+            int total = achievementManager?.TotalCount ?? 0;
+            var prog = textRenderer!.GetTexture($"{unlocked}/{total}", "Segoe UI", 14, new Color(255, 220, 50));
+            spriteBatch.Draw(prog, new Vector2(cx - prog.Width / 2, cardY + 42), Color.White);
+
+            spriteBatch.Draw(pixel!, new Rectangle(cardX + 20, cardY + 62, cardW - 40, 1), Color.White * 0.08f);
+
+            var all = achievementManager?.GetAll() ?? new List<Achievement>();
+            int sy = cardY + 72, sx = cardX + 24, sw = cardW - 48;
+            int maxVisible = 8;
+            int start = Math.Max(0, achievementsScrollIndex - maxVisible / 2);
+            start = Math.Min(start, Math.Max(0, all.Count - maxVisible));
+
+            for (int i = 0; i < maxVisible && start + i < all.Count; i++)
+            {
+                var ach = all[start + i];
+                int ay = sy + i * 40;
+                bool sel = start + i == achievementsScrollIndex;
+                bool done = ach.Unlocked;
+
+                Color bg = done ? new Color(255, 220, 50) * 0.06f : Color.White * 0.02f;
+                Color border = done ? new Color(255, 220, 50) * 0.15f : Color.White * 0.04f;
+                var rect = new Rectangle(sx, ay, sw, 34);
+                spriteBatch.Draw(pixel!, rect, bg);
+                DrawRectBorder(rect, sel ? new Color(0, 200, 255) * 0.3f : border);
+
+                string icon = done ? "✓" : "✗";
+                Color iconColor = done ? new Color(80, 255, 120) : new Color(120, 120, 150);
+                var iconTex = textRenderer!.GetTexture(icon, "Segoe UI", 16, iconColor);
+                spriteBatch.Draw(iconTex, new Vector2(sx + 8, ay + 4), Color.White);
+
+                var nameTex = textRenderer!.GetTexture(Localization.Get(ach.NameKey), "Segoe UI", 13,
+                    done ? Color.White : new Color(140, 140, 160));
+                spriteBatch.Draw(nameTex, new Vector2(sx + 30, ay + 4), Color.White);
+
+                var descTex = textRenderer!.GetTexture(Localization.Get(ach.DescKey), "Segoe UI", 10,
+                    new Color(100, 100, 130));
+                spriteBatch.Draw(descTex, new Vector2(sx + 30, ay + 20), Color.White);
+            }
+
+            var hint = textRenderer!.GetTexture(Localization.Get("hint_stats"), "Segoe UI", 11, new Color(80, 80, 110));
+            spriteBatch.Draw(hint, new Vector2(cx - hint.Width / 2, cardY + cardH - 22), Color.White);
+        }
+
+        // ═══════════ Replay View ═══════════
+
+        void StartReplayView(ReplayData replay)
+        {
+            replayData = replay;
+            replayEventIndex = 0;
+            state = GameState.ReplayView;
+            replayJudgments.Clear();
+            score = 0; combo = 0; maxCombo = 0; hitCount = 0; missCount = 0;
+            keyFlashes.Clear(); particles.Clear(); judgmentPopups.Clear();
+            shakeTimer = 0; beatPulseAlpha = 0;
+
+            // Load song/beatmap for visual display
+            LoadCurrentSong();
+            EnterBorderlessFullscreen();
+            menuMusicInstance?.Stop();
+            stopwatch.Restart();
+            if (songInstance != null)
+            {
+                songInstance.Volume = settingsManager?.Settings.MusicVolume ?? 0.7f;
+                songInstance.Play();
+            }
+        }
+
+        void UpdateReplayView(GameTime gameTime)
+        {
+            if (replayData == null) return;
+            float time = (float)stopwatch.Elapsed.TotalSeconds;
+            float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+
+            // Process replay events
+            while (replayEventIndex < replayData.Events.Count)
+            {
+                var ev = replayData.Events[replayEventIndex];
+                if (ev.Time > time) break;
+                replayEventIndex++;
+
+                // Simulate the event visually
+                Color jColor = ev.Judgment switch
+                {
+                    "PERFECT" => new Color(255, 220, 50),
+                    "GREAT" => new Color(80, 255, 120),
+                    "GOOD" => new Color(0, 200, 255),
+                    _ => new Color(255, 80, 80)
+                };
+
+                if (ev.Judgment != "MISS")
+                {
+                    score += ev.ScoreGained;
+                    combo = ev.ComboAt;
+                    if (combo > maxCombo) maxCombo = combo;
+                    hitCount++;
+                    SpawnHitParticles(ev.Column);
+                    sfxHit?.Play(0.6f * (settingsManager?.Settings.SfxVolume ?? 0.8f), 0, 0);
+
+                    int lx = LaneLeft + ev.Column * LaneWidth + 4;
+                    if (keyFlashPool != null)
+                    {
+                        var k = keyFlashPool.Rent();
+                        k.Reset(new Rectangle(lx, HitZoneY, LaneWidth - 8, HitZoneHeight),
+                            jColor, GameConfig.KeyFlashDuration);
+                        keyFlashes.Add(k);
+                    }
+                }
+                else
+                {
+                    combo = 0; missCount++;
+                }
+
+                judgmentPopups.Add(new JudgmentPopup { Text = ev.Judgment, Color = jColor, Timer = 0.6f,
+                    Position = new Vector2(LaneLeft + ev.Column * LaneWidth + LaneWidth / 2, HitZoneY - 30) });
+            }
+
+            // Remove played notes
+            for (var n = notes.First; n != null;)
+            {
+                var next = n.Next;
+                if (time - n.Value.Time > GameConfig.ApproachTime + 0.5f) notes.Remove(n);
+                n = next;
+            }
+
+            // Update effects
+            if (shakeTimer > 0) shakeTimer -= dt;
+            for (int i = particles.Count - 1; i >= 0; i--)
+            { var p = particles[i]; p.Pos += p.Vel * dt; p.Vel.Y += 500f * dt; p.Life -= dt; if (p.Life <= 0) particles.RemoveAt(i); }
+            for (int i = judgmentPopups.Count - 1; i >= 0; i--)
+            { var j = judgmentPopups[i]; j.Timer -= dt; j.Position = new Vector2(j.Position.X, j.Position.Y - 45f * dt); if (j.Timer <= 0) judgmentPopups.RemoveAt(i); }
+            for (int i = keyFlashes.Count - 1; i >= 0; i--)
+            { var k = keyFlashes[i]; k.TimeToLive -= dt; if (k.TimeToLive <= 0) { keyFlashes.RemoveAt(i); keyFlashPool?.Return(k); } }
+
+            // End of replay
+            if (replayEventIndex >= replayData.Events.Count && notes.Count == 0)
+            {
+                songInstance?.Stop(); stopwatch.Stop();
+                state = GameState.Result;
+                score = replayData.FinalScore;
+                maxCombo = replayData.MaxCombo;
+                hitCount = replayData.Hit;
+                missCount = replayData.Miss;
+                resultGrade = replayData.Grade;
+                maxScore = (hitCount + missCount) * 100;
+                resultMenuIndex = 0;
+            }
+        }
+
+        void DrawReplayView()
+        {
+            // Draw the same gameplay view
+            float time = (float)stopwatch.Elapsed.TotalSeconds;
+            int ll = LaneLeft, hz = HitZoneY;
+
+            for (int i = 0; i < LaneCount; i++)
+                spriteBatch!.Draw(pixel!, new Rectangle(ll + i * LaneWidth, 0, LaneWidth, height), Color.White * (i % 2 == 0 ? 0.02f : 0.04f));
+            for (int i = 0; i <= LaneCount; i++)
+                spriteBatch!.Draw(pixel!, new Rectangle(ll + i * LaneWidth, 0, 1, height), Color.White * 0.08f);
+
+            int tier = combo >= GameConfig.ComboTier4 ? 4
+                     : combo >= GameConfig.ComboTier3 ? 3
+                     : combo >= GameConfig.ComboTier2 ? 2
+                     : combo >= GameConfig.ComboTier1 ? 1 : 0;
+            Color glow = TierGlowColor[tier];
+            spriteBatch!.Draw(pixel!, new Rectangle(ll, hz, TotalLaneWidth, 2), glow * 0.8f);
+            spriteBatch.Draw(pixel!, new Rectangle(ll, hz, TotalLaneWidth, HitZoneHeight), Color.White * 0.02f);
+
+            // Notes
+            for (var n = notes.Last; n != null; n = n.Previous)
+            {
+                float dt = n.Value.Time - time;
+                float prog = (GameConfig.ApproachTime - dt) / (GameConfig.ApproachTime + 0.01f);
+                if (prog < 0 || prog > 1.2f) continue;
+                int nx = ll + n.Value.Column * LaneWidth + 6;
+                int ny = (int)(MathHelper.Clamp(prog, 0f, 1f) * (hz - NoteHeight));
+                var nr = new Rectangle(nx, ny, LaneWidth - 12, NoteHeight);
+                Color nc = TierNoteColors[tier][n.Value.Column % 4];
+                spriteBatch.Draw(pixel!, new Rectangle(nr.X - 1, nr.Y - 1, nr.Width + 2, nr.Height + 2), nc * 0.2f);
+                spriteBatch.Draw(pixel!, nr, nc * 0.9f);
+            }
+
+            // Effects
+            foreach (var k in keyFlashes)
+                spriteBatch!.Draw(pixel!, k.Rect, k.Color * (Math.Clamp(k.TimeToLive / GameConfig.KeyFlashDuration, 0, 1) * 0.3f));
+            foreach (var p in particles)
+            { float pa = p.Life / p.MaxLife; float ps = p.Size * (0.5f + pa * 0.5f);
+              spriteBatch!.Draw(pixel!, new Rectangle((int)(p.Pos.X - ps / 2), (int)(p.Pos.Y - ps / 2), (int)ps + 1, (int)ps + 1), p.Color * pa); }
+            foreach (var j in judgmentPopups)
+            { float ja = Math.Clamp(j.Timer / 0.3f, 0, 1);
+              var jt = textRenderer!.GetTexture(j.Text, "Segoe UI", 22, j.Color);
+              spriteBatch!.Draw(jt, new Vector2(j.Position.X - jt.Width / 2, j.Position.Y), Color.White * ja); }
+
+            // HUD
+            var sct = textRenderer!.GetTexture($"{Localization.Get("score")}: {score}", "Segoe UI", 18, Color.White);
+            spriteBatch.Draw(sct, new Vector2(width - sct.Width - 16, 14), Color.White);
+
+            if (combo > 1)
+            {
+                var ct = textRenderer!.GetTexture($"{combo}x", "Segoe UI", 36, glow);
+                spriteBatch.Draw(ct, new Vector2((width - ct.Width) / 2, hz - 56), Color.White);
+            }
+
+            // REPLAY label
+            var replayLabel = textRenderer!.GetTexture("▶ REPLAY", "Segoe UI", 20, new Color(255, 220, 50));
+            spriteBatch.Draw(replayLabel, new Vector2(16, 14), Color.White);
+
+            if (replayData != null)
+            {
+                var playerTex = textRenderer!.GetTexture(replayData.Player, "Segoe UI", 14, new Color(160, 160, 180));
+                spriteBatch.Draw(playerTex, new Vector2(16, 40), Color.White);
+            }
+        }
+
+        int GetUniqueSongsPlayed()
+        {
+            if (statsDb == null) return 0;
+            var recent = statsDb.GetRecentPlays(accountsManager?.LoggedInUser, 1000);
+            return recent.Select(r => r.SongId).Distinct().Count();
         }
 
         // ═══════════ Helpers ═══════════

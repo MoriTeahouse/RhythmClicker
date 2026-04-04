@@ -1,0 +1,180 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+
+namespace ClickerGame
+{
+    /// <summary>
+    /// Imports osu! .osu beatmap files and converts them to the game's Beatmap format.
+    /// Supports osu!mania (mode 3) natively and converts standard/taiko/catch modes to 4-lane.
+    /// </summary>
+    public static class OsuImporter
+    {
+        public static Beatmap Import(string osuFilePath)
+        {
+            var lines = File.ReadAllLines(osuFilePath);
+            var bm = new Beatmap();
+            string section = "";
+            int mode = 0;
+            int circleSize = 4; // mania key count
+            float overallDifficulty = 5;
+            var timingPoints = new List<(double offset, double beatLength, bool inherited)>();
+            var hitObjects = new List<OsuHitObject>();
+
+            foreach (var rawLine in lines)
+            {
+                string line = rawLine.Trim();
+                if (string.IsNullOrEmpty(line) || line.StartsWith("//")) continue;
+
+                if (line.StartsWith("[") && line.EndsWith("]"))
+                {
+                    section = line[1..^1];
+                    continue;
+                }
+
+                switch (section)
+                {
+                    case "General":
+                        if (line.StartsWith("Mode:"))
+                            int.TryParse(line.Split(':').Last().Trim(), out mode);
+                        if (line.StartsWith("AudioFilename:"))
+                            bm.AudioFile = line.Substring("AudioFilename:".Length).Trim();
+                        break;
+
+                    case "Metadata":
+                        if (line.StartsWith("Title:"))
+                            bm.Name = line.Substring("Title:".Length).Trim();
+                        if (line.StartsWith("Artist:"))
+                            bm.Author = line.Substring("Artist:".Length).Trim();
+                        break;
+
+                    case "Difficulty":
+                        if (line.StartsWith("CircleSize:"))
+                            float.TryParse(line.Split(':').Last().Trim(), System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out var cs)
+                                .ToString(); // just parse
+                        if (line.StartsWith("CircleSize:"))
+                            int.TryParse(line.Split(':').Last().Trim().Split('.')[0], out circleSize);
+                        if (line.StartsWith("OverallDifficulty:"))
+                            float.TryParse(line.Split(':').Last().Trim(), System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out overallDifficulty);
+                        break;
+
+                    case "TimingPoints":
+                        ParseTimingPoint(line, timingPoints);
+                        break;
+
+                    case "HitObjects":
+                        ParseHitObject(line, hitObjects);
+                        break;
+                }
+            }
+
+            // Determine BPM from first uninherited timing point
+            var mainTiming = timingPoints.FirstOrDefault(tp => !tp.inherited);
+            if (mainTiming.beatLength > 0)
+                bm.Bpm = (float)(60000.0 / mainTiming.beatLength);
+            else
+                bm.Bpm = 120;
+
+            // Convert hit objects to 4-lane notes
+            if (mode == 3) // osu!mania
+                bm.Notes = ConvertManiaObjects(hitObjects, circleSize);
+            else // standard, taiko, catch -> convert to 4 lanes
+                bm.Notes = ConvertStandardObjects(hitObjects);
+
+            return bm;
+        }
+
+        static void ParseTimingPoint(string line, List<(double offset, double beatLength, bool inherited)> list)
+        {
+            var parts = line.Split(',');
+            if (parts.Length < 2) return;
+            if (!double.TryParse(parts[0], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double offset)) return;
+            if (!double.TryParse(parts[1], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double beatLength)) return;
+            bool inherited = parts.Length > 6 && parts[6].Trim() == "0";
+            list.Add((offset, beatLength, inherited));
+        }
+
+        static void ParseHitObject(string line, List<OsuHitObject> list)
+        {
+            var parts = line.Split(',');
+            if (parts.Length < 4) return;
+
+            var obj = new OsuHitObject();
+            if (!int.TryParse(parts[0], out obj.X)) return;
+            if (!int.TryParse(parts[1], out obj.Y)) return;
+            if (!double.TryParse(parts[2], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out obj.Time)) return;
+            if (!int.TryParse(parts[3], out obj.Type)) return;
+
+            // Check for hold note end time (mania) - in extras after ':'
+            if ((obj.Type & 128) != 0 && parts.Length >= 6)
+            {
+                // Format: x,y,time,type,hitSound,endTime:extras
+                var endParts = parts[5].Split(':');
+                if (endParts.Length > 0)
+                    double.TryParse(endParts[0], System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out obj.EndTime);
+            }
+
+            list.Add(obj);
+        }
+
+        static List<Note> ConvertManiaObjects(List<OsuHitObject> objects, int keyCount)
+        {
+            var notes = new List<Note>();
+            if (keyCount <= 0) keyCount = 4;
+
+            foreach (var obj in objects)
+            {
+                // osu!mania column = floor(x * keyCount / 512)
+                int col = (int)(obj.X * keyCount / 512.0);
+                col = Math.Clamp(col, 0, keyCount - 1);
+
+                // Map to 4 lanes
+                int lane;
+                if (keyCount <= 4)
+                    lane = col;
+                else
+                    lane = (int)((float)col / keyCount * 4);
+                lane = Math.Clamp(lane, 0, 3);
+
+                float timeSec = (float)(obj.Time / 1000.0);
+                notes.Add(new Note { Time = (float)Math.Round(timeSec, 3), Column = lane });
+            }
+
+            notes.Sort((a, b) => a.Time.CompareTo(b.Time));
+            return notes;
+        }
+
+        static List<Note> ConvertStandardObjects(List<OsuHitObject> objects)
+        {
+            var notes = new List<Note>();
+
+            foreach (var obj in objects)
+            {
+                // Map x position (0-512) to 4 lanes
+                int lane = (int)(obj.X / 128.0);
+                lane = Math.Clamp(lane, 0, 3);
+
+                float timeSec = (float)(obj.Time / 1000.0);
+                notes.Add(new Note { Time = (float)Math.Round(timeSec, 3), Column = lane });
+            }
+
+            notes.Sort((a, b) => a.Time.CompareTo(b.Time));
+            return notes;
+        }
+
+        struct OsuHitObject
+        {
+            public int X, Y;
+            public double Time;
+            public int Type;
+            public double EndTime;
+        }
+    }
+}
