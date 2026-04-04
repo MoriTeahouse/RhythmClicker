@@ -280,6 +280,100 @@ namespace ClickerGame
         }
 
         record AuthResponse(bool Ok, string Message);
+
+        // ── Profile ─────────────────────────────────────────────────
+        public async Task<bool> UploadProfileAsync(string user, string avatarId, string bannerId, string bio, string region)
+        {
+            try
+            {
+                var resp = await _http.PostAsync($"{ServerUrl}/api/profile",
+                    Json(new { user, avatarId, bannerId, bio, region }));
+                return resp.IsSuccessStatusCode;
+            }
+            catch { return false; }
+        }
+
+        public async Task<PlayerProfileDto?> GetProfileAsync(string user)
+        {
+            try
+            {
+                var resp = await _http.GetAsync($"{ServerUrl}/api/profile?user={Uri.EscapeDataString(user)}");
+                if (!resp.IsSuccessStatusCode) return null;
+                var json = await resp.Content.ReadAsStringAsync();
+                var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (!root.GetProperty("ok").GetBoolean()) return null;
+                var p = root.GetProperty("profile");
+                var profile = new PlayerProfileDto
+                {
+                    User = p.GetProperty("user").GetString() ?? user,
+                    AvatarId = p.GetProperty("avatarId").GetString() ?? "default",
+                    BannerId = p.GetProperty("bannerId").GetString() ?? "default",
+                    Bio = p.GetProperty("bio").GetString() ?? "",
+                    Region = p.GetProperty("region").GetString() ?? "",
+                    CreatedAt = p.GetProperty("createdAt").GetString() ?? "",
+                    TotalPlays = p.GetProperty("totalPlays").GetInt32(),
+                    BestCombo = p.GetProperty("bestCombo").GetInt32(),
+                    AvgAccuracy = p.GetProperty("avgAccuracy").GetDouble(),
+                };
+                if (p.TryGetProperty("badges", out var badgesArr))
+                    foreach (var b in badgesArr.EnumerateArray())
+                        profile.Badges.Add(new BadgeDto
+                        {
+                            BadgeId = b.GetProperty("badgeId").GetString() ?? "",
+                            BadgeName = b.GetProperty("badgeName").GetString() ?? "",
+                            BadgeColor = b.GetProperty("badgeColor").GetString() ?? "#FFD700"
+                        });
+                if (p.TryGetProperty("bestGrades", out var gradesArr))
+                    foreach (var g in gradesArr.EnumerateArray())
+                        profile.BestGrades.Add(new BestGradeDto
+                        {
+                            SongId = g.GetProperty("songId").GetString() ?? "",
+                            Difficulty = g.GetProperty("difficulty").GetString() ?? "",
+                            BestScore = g.GetProperty("bestScore").GetInt32(),
+                            BestGrade = g.GetProperty("bestGrade").GetString() ?? "",
+                            BestCombo = g.GetProperty("bestCombo").GetInt32(),
+                            BestAccuracy = g.GetProperty("bestAccuracy").GetDouble()
+                        });
+                return profile;
+            }
+            catch { return null; }
+        }
+
+        public async Task<List<PlayerSearchResult>> SearchPlayersAsync(string query)
+        {
+            var results = new List<PlayerSearchResult>();
+            try
+            {
+                var resp = await _http.GetAsync($"{ServerUrl}/api/players/search?q={Uri.EscapeDataString(query)}");
+                if (!resp.IsSuccessStatusCode) return results;
+                var json = await resp.Content.ReadAsStringAsync();
+                var arr = JsonDocument.Parse(json).RootElement;
+                foreach (var el in arr.EnumerateArray())
+                {
+                    var item = new PlayerSearchResult
+                    {
+                        Username = el.GetProperty("username").GetString() ?? "",
+                        AvatarId = el.GetProperty("avatarId").GetString() ?? "default",
+                        Region = el.GetProperty("region").GetString() ?? "",
+                        TotalPlays = el.GetProperty("totalPlays").GetInt32(),
+                        BestCombo = el.GetProperty("bestCombo").GetInt32(),
+                        AvgAccuracy = el.GetProperty("avgAccuracy").GetDouble()
+                    };
+                    if (el.TryGetProperty("badges", out var badges))
+                        foreach (var b in badges.EnumerateArray())
+                            item.Badges.Add(new BadgeDto
+                            {
+                                BadgeId = b.GetProperty("badgeId").GetString() ?? "",
+                                BadgeName = b.GetProperty("badgeName").GetString() ?? "",
+                                BadgeColor = b.GetProperty("badgeColor").GetString() ?? "#FFD700"
+                            });
+                    results.Add(item);
+                }
+            }
+            catch { }
+            return results;
+        }
     }
 
     // ── Sync DTOs ───────────────────────────────────────────────────
@@ -311,5 +405,48 @@ namespace ClickerGame
         public int PlaysImported { get; set; }
         public int AchievementsSynced { get; set; }
         public bool SettingsSynced { get; set; }
+    }
+
+    public class PlayerProfileDto
+    {
+        public string User { get; set; } = "";
+        public string AvatarId { get; set; } = "default";
+        public string BannerId { get; set; } = "default";
+        public string Bio { get; set; } = "";
+        public string Region { get; set; } = "";
+        public string CreatedAt { get; set; } = "";
+        public int TotalPlays { get; set; }
+        public int BestCombo { get; set; }
+        public double AvgAccuracy { get; set; }
+        public List<BadgeDto> Badges { get; set; } = new();
+        public List<BestGradeDto> BestGrades { get; set; } = new();
+    }
+
+    public class BadgeDto
+    {
+        public string BadgeId { get; set; } = "";
+        public string BadgeName { get; set; } = "";
+        public string BadgeColor { get; set; } = "#FFD700";
+    }
+
+    public class BestGradeDto
+    {
+        public string SongId { get; set; } = "";
+        public string Difficulty { get; set; } = "";
+        public int BestScore { get; set; }
+        public string BestGrade { get; set; } = "";
+        public int BestCombo { get; set; }
+        public double BestAccuracy { get; set; }
+    }
+
+    public class PlayerSearchResult
+    {
+        public string Username { get; set; } = "";
+        public string AvatarId { get; set; } = "default";
+        public string Region { get; set; } = "";
+        public int TotalPlays { get; set; }
+        public int BestCombo { get; set; }
+        public double AvgAccuracy { get; set; }
+        public List<BadgeDto> Badges { get; set; } = new();
     }
 }

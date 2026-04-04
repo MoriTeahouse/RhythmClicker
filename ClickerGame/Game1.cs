@@ -38,9 +38,9 @@ namespace ClickerGame
         string currentDifficulty = "easy";
 
         // Menu / scene
-        enum GameState { Menu, Playing, Result, Account, Language, Stats, BeatmapEditor, Settings, Achievements, ReplayView }
+        enum GameState { Menu, Playing, Result, Account, Language, Stats, BeatmapEditor, Settings, Achievements, ReplayView, Profile, SearchPlayer, EditProfile }
         GameState state = GameState.Menu;
-        string[] menuKeys = new[] { "menu_start", "menu_editor", "menu_stats", "menu_settings", "menu_achievements", "menu_account", "menu_language", "menu_exit" };
+        string[] menuKeys = new[] { "menu_start", "menu_editor", "menu_stats", "menu_profile", "menu_search", "menu_settings", "menu_achievements", "menu_account", "menu_language", "menu_exit" };
         int currentMenuIndex = 0;
 
         // Language selection
@@ -98,6 +98,53 @@ namespace ClickerGame
         CloudSyncManager? cloudSync;
         string syncStatusText = "";
         float syncStatusTimer = 0f;
+
+        // Profile
+        PlayerProfileDto? viewingProfile;
+        bool profileLoading = false;
+        int profileScrollIndex = 0;
+
+        // Edit Profile
+        int editProfileFieldIndex = 0; // 0=avatar, 1=banner, 2=bio, 3=region, 4=save
+        string editBio = "";
+        string editRegion = "";
+        int editAvatarIndex = 0;
+        int editBannerIndex = 0;
+        bool editProfileSaving = false;
+        string editProfileMessage = "";
+        float editProfileMsgTimer = 0f;
+
+        // Avatar/Banner presets
+        static readonly (string id, string label, Color bg, Color fg, string icon)[] AvatarPresets = new[]
+        {
+            ("default",  "Default",   new Color(20, 20, 40),    new Color(0, 200, 255),   ""),
+            ("blue",     "Ocean",     new Color(20, 60, 120),   new Color(100, 200, 255), "~"),
+            ("red",      "Flame",     new Color(120, 20, 20),   new Color(255, 120, 80),  "*"),
+            ("green",    "Forest",    new Color(20, 80, 40),    new Color(80, 255, 120),   "T"),
+            ("purple",   "Nebula",    new Color(60, 20, 100),   new Color(200, 140, 255), "."),
+            ("gold",     "Crown",     new Color(80, 60, 10),    new Color(255, 220, 50),  "W"),
+            ("pink",     "Sakura",    new Color(100, 30, 60),   new Color(255, 160, 200), "*"),
+            ("cyan",     "Ice",       new Color(10, 60, 80),    new Color(80, 240, 255),  "#"),
+            ("orange",   "Sunset",    new Color(100, 50, 10),   new Color(255, 180, 60),  "~"),
+            ("white",    "Ghost",     new Color(60, 60, 60),    new Color(220, 220, 230), "?"),
+        };
+        static readonly (string id, string label, Color color)[] BannerPresets = new[]
+        {
+            ("default",  "Default",   new Color(30, 40, 80)),
+            ("crimson",  "Crimson",   new Color(100, 20, 30)),
+            ("navy",     "Navy",      new Color(15, 25, 80)),
+            ("emerald",  "Emerald",   new Color(15, 70, 40)),
+            ("violet",   "Violet",    new Color(60, 20, 90)),
+            ("midnight", "Midnight",  new Color(10, 10, 30)),
+            ("sunset",   "Sunset",    new Color(100, 50, 20)),
+            ("rose",     "Rose",      new Color(90, 30, 50)),
+        };
+
+        // Search
+        string searchQuery = "";
+        List<PlayerSearchResult> searchResults = new();
+        int searchSelectedIndex = 0;
+        bool searchLoading = false;
 
         // Settings UI state
         int settingsMenuIndex = 0;
@@ -173,6 +220,8 @@ namespace ClickerGame
         int HitZoneY => height - HitZoneHeight - 40;
 
         float menuTimer = 0f;
+        int menuScrollOffset = 0;
+        bool isFullscreen = false;
         bool editorMode = false; // legacy playing-editor flag
 
         // ═══════════ Beatmap Editor State ═══════════
@@ -587,6 +636,13 @@ namespace ClickerGame
             kb = Keyboard.GetState();
             mouseState = Mouse.GetState();
 
+            // F11 fullscreen toggle
+            if (kb.IsKeyDown(Keys.F11) && !prevKb.IsKeyDown(Keys.F11))
+            {
+                if (isFullscreen) { ExitBorderlessFullscreen(); isFullscreen = false; }
+                else { EnterBorderlessFullscreen(); isFullscreen = true; }
+            }
+
             // Escape handling
             if (kb.IsKeyDown(Keys.Escape) && !prevKb.IsKeyDown(Keys.Escape))
             {
@@ -604,7 +660,8 @@ namespace ClickerGame
                 else if (state == GameState.Account || state == GameState.Language
                       || state == GameState.Stats || state == GameState.BeatmapEditor
                       || state == GameState.Settings || state == GameState.Achievements
-                      || state == GameState.ReplayView)
+                      || state == GameState.ReplayView || state == GameState.Profile
+                      || state == GameState.SearchPlayer)
                 {
                     if (state == GameState.BeatmapEditor)
                     { edPreviewInstance?.Stop(); edPreviewing = false; }
@@ -628,6 +685,9 @@ namespace ClickerGame
                 case GameState.Settings: UpdateSettings(); break;
                 case GameState.Achievements: UpdateAchievements(); break;
                 case GameState.ReplayView: UpdateReplayView(gameTime); break;
+                case GameState.Profile: UpdateProfile(); break;
+                case GameState.SearchPlayer: UpdateSearchPlayer(); break;
+                case GameState.EditProfile: UpdateEditProfile(gameTime); break;
             }
 
             // Achievement popup timer
@@ -647,6 +707,11 @@ namespace ClickerGame
         void UpdateMenu(GameTime gt)
         {
             menuTimer += (float)gt.ElapsedGameTime.TotalSeconds;
+
+            // Mouse wheel scroll
+            int scrollDeltaMenu = mouseState.ScrollWheelValue - prevScrollValue;
+            if (scrollDeltaMenu != 0)
+                menuScrollOffset = Math.Max(0, menuScrollOffset - scrollDeltaMenu / 40);
 
             if (kb.IsKeyDown(Keys.Up) && !prevKb.IsKeyDown(Keys.Up))
                 currentMenuIndex = (currentMenuIndex - 1 + menuKeys.Length) % menuKeys.Length;
@@ -705,6 +770,51 @@ namespace ClickerGame
                     cachedStats = statsDb?.GetSummary(user);
                     cachedRecent = statsDb?.GetRecentPlays(user, 8);
                     discordRpc?.SetStats();
+                }
+                else if (key == "menu_profile")
+                {
+                    state = GameState.Profile;
+                    profileScrollIndex = 0;
+                    var user = accountsManager?.LoggedInUser;
+                    if (user != null)
+                    {
+                        // Build local fallback profile immediately
+                        viewingProfile = new PlayerProfileDto { User = user };
+                        if (statsDb != null)
+                        {
+                            var summary = statsDb.GetSummary(user);
+                            if (summary != null)
+                            {
+                                viewingProfile.TotalPlays = summary.TotalPlays;
+                                viewingProfile.BestCombo = summary.BestCombo;
+                                viewingProfile.AvgAccuracy = summary.AvgAccuracy;
+                            }
+                        }
+                        // Try cloud fetch to enrich with badges/bio/region
+                        if (cloudSync != null)
+                        {
+                            profileLoading = true;
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    var cloud = await cloudSync.GetProfileAsync(user);
+                                    if (cloud != null) viewingProfile = cloud;
+                                }
+                                catch { }
+                                finally { profileLoading = false; }
+                            });
+                        }
+                    }
+                    else
+                    {
+                        viewingProfile = null;
+                    }
+                }
+                else if (key == "menu_search")
+                {
+                    state = GameState.SearchPlayer;
+                    searchQuery = ""; searchResults.Clear(); searchSelectedIndex = 0; searchLoading = false;
                 }
                 else if (key == "menu_settings")
                 {
@@ -1150,6 +1260,7 @@ namespace ClickerGame
             graphics.IsFullScreen = false; graphics.ApplyChanges();
             Window.IsBorderless = true; Window.Position = Point.Zero;
             width = d.Width; height = d.Height;
+            isFullscreen = true;
             renderCache?.Dispose(); renderCache = new RenderCache(GraphicsDevice);
         }
 
@@ -1160,6 +1271,7 @@ namespace ClickerGame
             graphics.PreferredBackBufferHeight = windowedHeight;
             graphics.IsFullScreen = false; graphics.ApplyChanges();
             width = windowedWidth; height = windowedHeight;
+            isFullscreen = false;
             renderCache?.Dispose(); renderCache = new RenderCache(GraphicsDevice);
         }
 
@@ -1200,6 +1312,9 @@ namespace ClickerGame
                 case GameState.Settings: DrawSettings(); break;
                 case GameState.Achievements: DrawAchievements(); break;
                 case GameState.ReplayView: DrawReplayView(); break;
+                case GameState.Profile: DrawProfile(); break;
+                case GameState.SearchPlayer: DrawSearchPlayer(); break;
+                case GameState.EditProfile: DrawEditProfile(); break;
             }
 
             // Achievement popup overlay
@@ -1330,9 +1445,10 @@ namespace ClickerGame
         {
             int cx = width / 2;
             float pulse = (float)(0.8 + 0.2 * Math.Sin(menuTimer * 2.0));
+            int scroll = -menuScrollOffset;
 
             // Title
-            int titleY = 80;
+            int titleY = 80 + scroll;
             var titleTex = textRenderer!.GetTexture("CLICK", "Segoe UI", 48, Color.White);
             spriteBatch!.Draw(titleTex, new Vector2(cx - titleTex.Width / 2, titleY), Color.White);
 
@@ -1387,10 +1503,21 @@ namespace ClickerGame
             int optX = cx - optW / 2;
             int optY = cardY + 98;
 
+            // Auto-scroll to keep selected item visible
+            int selBtnTop = optY + currentMenuIndex * (optH + gap);
+            int selBtnBot = selBtnTop + optH;
+            if (selBtnBot > height - 40)
+                menuScrollOffset += selBtnBot - (height - 40);
+            if (selBtnTop < 60)
+                menuScrollOffset = Math.Max(0, menuScrollOffset + selBtnTop - 60);
+
             for (int i = 0; i < menuKeys.Length; i++)
             {
                 bool sel = i == currentMenuIndex;
                 var btn = new Rectangle(optX, optY + i * (optH + gap), optW, optH);
+
+                // Skip drawing if completely off-screen
+                if (btn.Bottom < 0 || btn.Top > height) continue;
 
                 if (sel)
                 {
@@ -1404,6 +1531,17 @@ namespace ClickerGame
                 var tc2 = sel ? Color.White : new Color(160, 160, 180);
                 var tex = textRenderer!.GetTexture(Localization.Get(menuKeys[i]), "Segoe UI", 17, tc2);
                 spriteBatch.Draw(tex, new Vector2(btn.X + 18, btn.Y + (btn.Height - tex.Height) / 2), Color.White);
+            }
+
+            // Scroll indicator
+            int totalMenuH = menuKeys.Length * (optH + gap);
+            int contentH = optY - scroll + totalMenuH;
+            if (contentH > height)
+            {
+                float scrollRatio = (float)menuScrollOffset / Math.Max(1, contentH - height);
+                int barH = Math.Max(20, height * height / contentH);
+                int barY = (int)(scrollRatio * (height - barH));
+                spriteBatch.Draw(pixel!, new Rectangle(width - 6, barY, 4, barH), Color.White * 0.15f);
             }
 
             // Hint bar
@@ -2593,6 +2731,578 @@ namespace ClickerGame
                 try { await cloudSync.UploadSettingsAsync(user, settings); }
                 catch { }
             });
+        }
+
+        // ═══════════ Profile ═══════════
+        void UpdateProfile()
+        {
+            if (kb.IsKeyDown(Keys.Escape) && !prevKb.IsKeyDown(Keys.Escape))
+            { state = GameState.Menu; return; }
+            if (kb.IsKeyDown(Keys.Up) && !prevKb.IsKeyDown(Keys.Up)) profileScrollIndex = Math.Max(0, profileScrollIndex - 1);
+            if (kb.IsKeyDown(Keys.Down) && !prevKb.IsKeyDown(Keys.Down)) profileScrollIndex++;
+            // E = Edit profile (only own profile)
+            if (kb.IsKeyDown(Keys.E) && !prevKb.IsKeyDown(Keys.E))
+            {
+                var user = accountsManager?.LoggedInUser;
+                if (user != null && viewingProfile != null && string.Equals(viewingProfile.User, user, StringComparison.OrdinalIgnoreCase))
+                {
+                    editProfileFieldIndex = 0;
+                    editBio = viewingProfile.Bio ?? "";
+                    editRegion = viewingProfile.Region ?? "";
+                    editAvatarIndex = Math.Max(0, Array.FindIndex(AvatarPresets, a => a.id == viewingProfile.AvatarId));
+                    editBannerIndex = Math.Max(0, Array.FindIndex(BannerPresets, b => b.id == viewingProfile.BannerId));
+                    editProfileMessage = "";
+                    editProfileMsgTimer = 0f;
+                    editProfileSaving = false;
+                    state = GameState.EditProfile;
+                    return;
+                }
+            }
+            if (kb.IsKeyDown(Keys.F5) && !prevKb.IsKeyDown(Keys.F5))
+            {
+                var user = accountsManager?.LoggedInUser;
+                if (user != null && cloudSync != null)
+                {
+                    profileLoading = true;
+                    _ = Task.Run(async () =>
+                    {
+                        try { viewingProfile = await cloudSync.GetProfileAsync(user); }
+                        catch { }
+                        finally { profileLoading = false; }
+                    });
+                }
+            }
+        }
+
+        void DrawProfile()
+        {
+            spriteBatch!.Draw(pixel!, new Rectangle(0, 0, width, height), Color.Black * 0.7f);
+            int cx = width / 2;
+            int cardW = 520, cardH = height - 60;
+            int cardX = cx - cardW / 2, cardY = 30;
+
+            spriteBatch.Draw(pixel!, new Rectangle(cardX, cardY, cardW, cardH), new Color(14, 14, 32) * 0.96f);
+            DrawRectBorder(new Rectangle(cardX, cardY, cardW, cardH), new Color(0, 200, 255) * 0.15f);
+
+            // Banner area
+            int bannerH = 80;
+            Color bannerColor = new Color(30, 40, 80);
+            // Apply banner preset if profile loaded
+            if (viewingProfile != null)
+            {
+                int bnIdx = Array.FindIndex(BannerPresets, b => b.id == viewingProfile.BannerId);
+                if (bnIdx >= 0) bannerColor = BannerPresets[bnIdx].color;
+            }
+            spriteBatch.Draw(pixel!, new Rectangle(cardX + 1, cardY + 1, cardW - 2, bannerH), bannerColor);
+
+            if (profileLoading)
+            {
+                var loading = textRenderer!.GetTexture(Localization.Get("profile_loading"), "Segoe UI", 16, new Color(100, 100, 130));
+                spriteBatch.Draw(loading, new Vector2(cx - loading.Width / 2, cardY + bannerH + 40), Color.White);
+                return;
+            }
+
+            if (viewingProfile == null)
+            {
+                var noProf = textRenderer!.GetTexture(Localization.Get("profile_not_logged_in"), "Segoe UI", 16, new Color(100, 100, 130));
+                spriteBatch.Draw(noProf, new Vector2(cx - noProf.Width / 2, cardY + bannerH + 40), Color.White);
+                var hint = textRenderer!.GetTexture(Localization.Get("hint_profile"), "Segoe UI", 11, new Color(80, 80, 110));
+                spriteBatch.Draw(hint, new Vector2(cx - hint.Width / 2, cardY + cardH - 22), Color.White);
+                return;
+            }
+
+            var p = viewingProfile;
+            int sy = cardY + bannerH + 12;
+            int sx = cardX + 20;
+            int sw = cardW - 40;
+
+            // Avatar with preset style
+            int avSize = 56;
+            int avX = cardX + 24, avY = cardY + bannerH - avSize / 2;
+            int avIdx = Array.FindIndex(AvatarPresets, a => a.id == p.AvatarId);
+            var avStyle = avIdx >= 0 ? AvatarPresets[avIdx] : AvatarPresets[0];
+            spriteBatch.Draw(pixel!, new Rectangle(avX - 1, avY - 1, avSize + 2, avSize + 2), avStyle.fg * 0.4f);
+            spriteBatch.Draw(pixel!, new Rectangle(avX, avY, avSize, avSize), avStyle.bg);
+            string avIcon = avStyle.icon != "" ? avStyle.icon : (p.User.Length > 0 ? p.User[0].ToString().ToUpper() : "?");
+            var avLetter = textRenderer!.GetTexture(avIcon, "Segoe UI", 28, avStyle.fg);
+            spriteBatch.Draw(avLetter, new Vector2(avX + (avSize - avLetter.Width) / 2, avY + (avSize - avLetter.Height) / 2), Color.White);
+
+            // Username
+            var nameT = textRenderer!.GetTexture(p.User, "Segoe UI", 22, Color.White);
+            spriteBatch.Draw(nameT, new Vector2(avX + avSize + 12, avY + 4), Color.White);
+
+            // Badges
+            int badgeX = avX + avSize + 12;
+            int badgeY = avY + 30;
+            foreach (var badge in p.Badges)
+            {
+                Color bc = ParseHexColor(badge.BadgeColor);
+                var bt = textRenderer!.GetTexture(badge.BadgeName, "Segoe UI", 11, Color.White);
+                int bw = bt.Width + 12;
+                spriteBatch.Draw(pixel!, new Rectangle(badgeX, badgeY, bw, 20), bc * 0.3f);
+                DrawRectBorder(new Rectangle(badgeX, badgeY, bw, 20), bc * 0.6f);
+                spriteBatch.Draw(bt, new Vector2(badgeX + 6, badgeY + 3), Color.White);
+                badgeX += bw + 6;
+            }
+
+            // Region + join date
+            sy = avY + avSize + 16;
+            if (!string.IsNullOrEmpty(p.Region))
+            {
+                var regT = textRenderer!.GetTexture($"\ud83c\udf0d {p.Region}", "Segoe UI", 12, new Color(120, 120, 150));
+                spriteBatch.Draw(regT, new Vector2(sx, sy), Color.White);
+            }
+            if (!string.IsNullOrEmpty(p.CreatedAt))
+            {
+                var joinT = textRenderer!.GetTexture($"{Localization.Get("profile_joined")}: {p.CreatedAt[..Math.Min(10, p.CreatedAt.Length)]}", "Segoe UI", 12, new Color(120, 120, 150));
+                spriteBatch.Draw(joinT, new Vector2(sx + sw - 160, sy), Color.White);
+            }
+            sy += 22;
+
+            // Bio
+            if (!string.IsNullOrEmpty(p.Bio))
+            {
+                spriteBatch.Draw(pixel!, new Rectangle(sx, sy, sw, 1), Color.White * 0.06f);
+                sy += 6;
+                var bioT = textRenderer!.GetTexture(p.Bio.Length > 200 ? p.Bio[..200] + "..." : p.Bio, "Segoe UI", 12, new Color(180, 180, 200));
+                spriteBatch.Draw(bioT, new Vector2(sx, sy), Color.White);
+                sy += Math.Max(bioT.Height, 16) + 8;
+            }
+
+            // Stats section
+            spriteBatch.Draw(pixel!, new Rectangle(sx, sy, sw, 1), Color.White * 0.08f);
+            sy += 8;
+            var statsLabel = textRenderer!.GetTexture(Localization.Get("profile_stats"), "Segoe UI", 14, new Color(0, 200, 255));
+            spriteBatch.Draw(statsLabel, new Vector2(sx, sy), Color.White);
+            sy += 22;
+
+            DrawStatLine(Localization.Get("total_plays"), $"{p.TotalPlays}", sy, sx, sw); sy += 22;
+            DrawStatLine(Localization.Get("best_combo"), $"{p.BestCombo}x", sy, sx, sw); sy += 22;
+            DrawStatLine(Localization.Get("avg_accuracy"), $"{p.AvgAccuracy:F1}%", sy, sx, sw); sy += 22;
+
+            // Best grades per map
+            if (p.BestGrades.Count > 0)
+            {
+                sy += 4;
+                spriteBatch.Draw(pixel!, new Rectangle(sx, sy, sw, 1), Color.White * 0.08f);
+                sy += 8;
+                var mapsLabel = textRenderer!.GetTexture(Localization.Get("profile_maps"), "Segoe UI", 14, new Color(0, 200, 255));
+                spriteBatch.Draw(mapsLabel, new Vector2(sx, sy), Color.White);
+                sy += 22;
+
+                int maxVisible = Math.Min(p.BestGrades.Count, 12);
+                int startIdx = Math.Min(profileScrollIndex, Math.Max(0, p.BestGrades.Count - maxVisible));
+                for (int i = startIdx; i < Math.Min(startIdx + maxVisible, p.BestGrades.Count); i++)
+                {
+                    if (sy + 18 > cardY + cardH - 30) break;
+                    var g = p.BestGrades[i];
+                    Color gc = g.BestGrade switch
+                    {
+                        "SS" => new Color(255, 220, 50),
+                        "S" => new Color(255, 180, 0),
+                        "A" => new Color(80, 255, 120),
+                        "B" => new Color(0, 200, 255),
+                        "C" => new Color(180, 140, 255),
+                        _ => new Color(255, 80, 80)
+                    };
+                    var songLine = textRenderer!.GetTexture($"{g.SongId}  {DiffShort(g.Difficulty)}", "Segoe UI", 11, new Color(160, 160, 180));
+                    spriteBatch.Draw(songLine, new Vector2(sx, sy), Color.White);
+                    var gradeT = textRenderer!.GetTexture(g.BestGrade, "Segoe UI", 12, gc);
+                    spriteBatch.Draw(gradeT, new Vector2(sx + sw - 120, sy), Color.White);
+                    var accT = textRenderer!.GetTexture($"{g.BestAccuracy:F1}%", "Segoe UI", 11, new Color(140, 140, 160));
+                    spriteBatch.Draw(accT, new Vector2(sx + sw - accT.Width, sy), Color.White);
+                    sy += 18;
+                }
+            }
+
+            var hintP = textRenderer!.GetTexture(Localization.Get("hint_profile"), "Segoe UI", 11, new Color(80, 80, 110));
+            spriteBatch.Draw(hintP, new Vector2(cx - hintP.Width / 2, cardY + cardH - 22), Color.White);
+        }
+
+        // ═══════════ Edit Profile ═══════════
+        void UpdateEditProfile(GameTime gameTime)
+        {
+            if (editProfileMsgTimer > 0)
+                editProfileMsgTimer -= (float)gameTime.ElapsedGameTime.TotalSeconds;
+
+            if (kb.IsKeyDown(Keys.Escape) && !prevKb.IsKeyDown(Keys.Escape))
+            { state = GameState.Profile; return; }
+
+            bool shift = kb.IsKeyDown(Keys.LeftShift) || kb.IsKeyDown(Keys.RightShift);
+
+            if (kb.IsKeyDown(Keys.Up) && !prevKb.IsKeyDown(Keys.Up))
+                editProfileFieldIndex = Math.Max(0, editProfileFieldIndex - 1);
+            if (kb.IsKeyDown(Keys.Down) && !prevKb.IsKeyDown(Keys.Down))
+                editProfileFieldIndex = Math.Min(4, editProfileFieldIndex + 1);
+            if (kb.IsKeyDown(Keys.Tab) && !prevKb.IsKeyDown(Keys.Tab))
+                editProfileFieldIndex = (editProfileFieldIndex + 1) % 5;
+
+            // Avatar selection (Left/Right on field 0)
+            if (editProfileFieldIndex == 0)
+            {
+                if (kb.IsKeyDown(Keys.Left) && !prevKb.IsKeyDown(Keys.Left))
+                    editAvatarIndex = (editAvatarIndex - 1 + AvatarPresets.Length) % AvatarPresets.Length;
+                if (kb.IsKeyDown(Keys.Right) && !prevKb.IsKeyDown(Keys.Right))
+                    editAvatarIndex = (editAvatarIndex + 1) % AvatarPresets.Length;
+            }
+            // Banner selection (Left/Right on field 1)
+            else if (editProfileFieldIndex == 1)
+            {
+                if (kb.IsKeyDown(Keys.Left) && !prevKb.IsKeyDown(Keys.Left))
+                    editBannerIndex = (editBannerIndex - 1 + BannerPresets.Length) % BannerPresets.Length;
+                if (kb.IsKeyDown(Keys.Right) && !prevKb.IsKeyDown(Keys.Right))
+                    editBannerIndex = (editBannerIndex + 1) % BannerPresets.Length;
+            }
+            // Bio text input (field 2)
+            else if (editProfileFieldIndex == 2)
+            {
+                if (kb.IsKeyDown(Keys.Back) && !prevKb.IsKeyDown(Keys.Back))
+                { if (editBio.Length > 0) editBio = editBio[..^1]; }
+                else
+                {
+                    foreach (var key in kb.GetPressedKeys())
+                    {
+                        if (prevKb.IsKeyDown(key)) continue;
+                        char? c = KeyToChar(key, shift);
+                        if (c.HasValue && editBio.Length < 120) editBio += c.Value;
+                    }
+                }
+            }
+            // Region text input (field 3)
+            else if (editProfileFieldIndex == 3)
+            {
+                if (kb.IsKeyDown(Keys.Back) && !prevKb.IsKeyDown(Keys.Back))
+                { if (editRegion.Length > 0) editRegion = editRegion[..^1]; }
+                else
+                {
+                    foreach (var key in kb.GetPressedKeys())
+                    {
+                        if (prevKb.IsKeyDown(key)) continue;
+                        char? c = KeyToChar(key, shift);
+                        if (c.HasValue && editRegion.Length < 30) editRegion += c.Value;
+                    }
+                }
+            }
+
+            // Enter on Save (field 4) or Ctrl+S anywhere
+            bool ctrlS = (kb.IsKeyDown(Keys.LeftControl) || kb.IsKeyDown(Keys.RightControl))
+                         && kb.IsKeyDown(Keys.S) && !prevKb.IsKeyDown(Keys.S);
+            if ((editProfileFieldIndex == 4 && kb.IsKeyDown(Keys.Enter) && !prevKb.IsKeyDown(Keys.Enter)) || ctrlS)
+            {
+                if (!editProfileSaving)
+                {
+                    var user = accountsManager?.LoggedInUser;
+                    if (user != null)
+                    {
+                        var avatarId = AvatarPresets[editAvatarIndex].id;
+                        var bannerId = BannerPresets[editBannerIndex].id;
+                        var bio = editBio;
+                        var region = editRegion;
+
+                        // Update local viewingProfile immediately
+                        if (viewingProfile != null)
+                        {
+                            viewingProfile.AvatarId = avatarId;
+                            viewingProfile.BannerId = bannerId;
+                            viewingProfile.Bio = bio;
+                            viewingProfile.Region = region;
+                        }
+
+                        if (cloudSync != null)
+                        {
+                            editProfileSaving = true;
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    var ok = await cloudSync.UploadProfileAsync(user, avatarId, bannerId, bio, region);
+                                    editProfileMessage = ok ? Localization.Get("edit_profile_saved") : Localization.Get("edit_profile_failed");
+                                }
+                                catch { editProfileMessage = Localization.Get("edit_profile_failed"); }
+                                finally { editProfileSaving = false; editProfileMsgTimer = 2.5f; }
+                            });
+                        }
+                        else
+                        {
+                            editProfileMessage = Localization.Get("edit_profile_saved");
+                            editProfileMsgTimer = 2.5f;
+                        }
+                    }
+                }
+            }
+        }
+
+        void DrawEditProfile()
+        {
+            spriteBatch!.Draw(pixel!, new Rectangle(0, 0, width, height), Color.Black * 0.8f);
+            int cx = width / 2;
+            int cardW = 480, cardH = 420;
+            int cardX = cx - cardW / 2, cardY = (height - cardH) / 2;
+
+            spriteBatch.Draw(pixel!, new Rectangle(cardX, cardY, cardW, cardH), new Color(14, 14, 32) * 0.98f);
+            DrawRectBorder(new Rectangle(cardX, cardY, cardW, cardH), new Color(0, 200, 255) * 0.2f);
+
+            int sx = cardX + 24, sy = cardY + 16;
+            int fieldW = cardW - 48;
+
+            // Title
+            var title = textRenderer!.GetTexture(Localization.Get("edit_profile_title"), "Segoe UI", 18, new Color(0, 200, 255));
+            spriteBatch.Draw(title, new Vector2(cx - title.Width / 2, sy), Color.White);
+            sy += 36;
+
+            // ── Field 0: Avatar ──
+            bool sel0 = editProfileFieldIndex == 0;
+            var avLabel = textRenderer!.GetTexture(Localization.Get("edit_avatar"), "Segoe UI", 13, sel0 ? new Color(0, 200, 255) : new Color(140, 140, 160));
+            spriteBatch.Draw(avLabel, new Vector2(sx, sy), Color.White);
+            sy += 20;
+            // Draw avatar preview
+            var avPreset = AvatarPresets[editAvatarIndex];
+            int avPrevSize = 48;
+            int avPrevX = sx + 20;
+            spriteBatch.Draw(pixel!, new Rectangle(avPrevX - 1, sy - 1, avPrevSize + 2, avPrevSize + 2), sel0 ? new Color(0, 200, 255) * 0.6f : Color.White * 0.15f);
+            spriteBatch.Draw(pixel!, new Rectangle(avPrevX, sy, avPrevSize, avPrevSize), avPreset.bg);
+            string avChar = avPreset.icon != "" ? avPreset.icon : (accountsManager?.LoggedInUser?.Length > 0 ? accountsManager.LoggedInUser[0].ToString().ToUpper() : "?");
+            var avCharT = textRenderer!.GetTexture(avChar, "Segoe UI", 24, avPreset.fg);
+            spriteBatch.Draw(avCharT, new Vector2(avPrevX + (avPrevSize - avCharT.Width) / 2, sy + (avPrevSize - avCharT.Height) / 2), Color.White);
+            // Name + arrows
+            var avNameT = textRenderer!.GetTexture($"\u25C0  {avPreset.label}  \u25B6", "Segoe UI", 14, sel0 ? Color.White : new Color(180, 180, 200));
+            spriteBatch.Draw(avNameT, new Vector2(avPrevX + avPrevSize + 20, sy + 14), Color.White);
+            sy += avPrevSize + 12;
+
+            // ── Field 1: Banner ──
+            bool sel1 = editProfileFieldIndex == 1;
+            var bnLabel = textRenderer!.GetTexture(Localization.Get("edit_banner"), "Segoe UI", 13, sel1 ? new Color(0, 200, 255) : new Color(140, 140, 160));
+            spriteBatch.Draw(bnLabel, new Vector2(sx, sy), Color.White);
+            sy += 20;
+            var bnPreset = BannerPresets[editBannerIndex];
+            int bnW = fieldW - 40, bnH = 28;
+            int bnX = sx + 20;
+            spriteBatch.Draw(pixel!, new Rectangle(bnX - 1, sy - 1, bnW + 2, bnH + 2), sel1 ? new Color(0, 200, 255) * 0.6f : Color.White * 0.1f);
+            spriteBatch.Draw(pixel!, new Rectangle(bnX, sy, bnW, bnH), bnPreset.color);
+            var bnNameT = textRenderer!.GetTexture($"\u25C0  {bnPreset.label}  \u25B6", "Segoe UI", 12, Color.White);
+            spriteBatch.Draw(bnNameT, new Vector2(bnX + (bnW - bnNameT.Width) / 2, sy + 6), Color.White);
+            sy += bnH + 14;
+
+            // ── Field 2: Bio ──
+            bool sel2 = editProfileFieldIndex == 2;
+            var bioLabel = textRenderer!.GetTexture(Localization.Get("edit_bio"), "Segoe UI", 13, sel2 ? new Color(0, 200, 255) : new Color(140, 140, 160));
+            spriteBatch.Draw(bioLabel, new Vector2(sx, sy), Color.White);
+            sy += 20;
+            spriteBatch.Draw(pixel!, new Rectangle(sx + 20, sy, fieldW - 40, 26), sel2 ? new Color(30, 40, 70) : new Color(20, 24, 40));
+            DrawRectBorder(new Rectangle(sx + 20, sy, fieldW - 40, 26), sel2 ? new Color(0, 200, 255) * 0.5f : Color.White * 0.08f);
+            string bioDisplay = editBio + (sel2 ? "_" : "");
+            var bioT = textRenderer!.GetTexture(bioDisplay.Length > 50 ? "..." + bioDisplay[^47..] : bioDisplay, "Segoe UI", 12, new Color(200, 200, 220));
+            spriteBatch.Draw(bioT, new Vector2(sx + 26, sy + 5), Color.White);
+            sy += 36;
+
+            // ── Field 3: Region ──
+            bool sel3 = editProfileFieldIndex == 3;
+            var regLabel = textRenderer!.GetTexture(Localization.Get("edit_region"), "Segoe UI", 13, sel3 ? new Color(0, 200, 255) : new Color(140, 140, 160));
+            spriteBatch.Draw(regLabel, new Vector2(sx, sy), Color.White);
+            sy += 20;
+            spriteBatch.Draw(pixel!, new Rectangle(sx + 20, sy, fieldW - 40, 26), sel3 ? new Color(30, 40, 70) : new Color(20, 24, 40));
+            DrawRectBorder(new Rectangle(sx + 20, sy, fieldW - 40, 26), sel3 ? new Color(0, 200, 255) * 0.5f : Color.White * 0.08f);
+            string regDisplay = editRegion + (sel3 ? "_" : "");
+            var regT = textRenderer!.GetTexture(regDisplay.Length > 30 ? "..." + regDisplay[^27..] : regDisplay, "Segoe UI", 12, new Color(200, 200, 220));
+            spriteBatch.Draw(regT, new Vector2(sx + 26, sy + 5), Color.White);
+            sy += 38;
+
+            // ── Field 4: Save button ──
+            bool sel4 = editProfileFieldIndex == 4;
+            string saveBtnText = editProfileSaving ? Localization.Get("edit_profile_saving") : Localization.Get("edit_profile_save");
+            var saveT = textRenderer!.GetTexture(saveBtnText, "Segoe UI", 15, sel4 ? Color.White : new Color(140, 140, 160));
+            int btnW = saveT.Width + 40, btnH = 32;
+            int btnX = cx - btnW / 2;
+            spriteBatch.Draw(pixel!, new Rectangle(btnX, sy, btnW, btnH), sel4 ? new Color(0, 140, 200) * 0.4f : new Color(30, 30, 50));
+            DrawRectBorder(new Rectangle(btnX, sy, btnW, btnH), sel4 ? new Color(0, 200, 255) * 0.6f : Color.White * 0.1f);
+            spriteBatch.Draw(saveT, new Vector2(cx - saveT.Width / 2, sy + 7), Color.White);
+            sy += btnH + 10;
+
+            // Status message
+            if (editProfileMsgTimer > 0 && !string.IsNullOrEmpty(editProfileMessage))
+            {
+                Color msgColor = editProfileMessage.Contains("!") || editProfileMessage.Contains("失敗") || editProfileMessage.Contains("failed")
+                    ? new Color(255, 80, 80)
+                    : new Color(80, 255, 120);
+                var msgT = textRenderer!.GetTexture(editProfileMessage, "Segoe UI", 12, msgColor);
+                spriteBatch.Draw(msgT, new Vector2(cx - msgT.Width / 2, sy), Color.White);
+            }
+
+            // Hint
+            var hint = textRenderer!.GetTexture(Localization.Get("hint_edit_profile"), "Segoe UI", 11, new Color(80, 80, 110));
+            spriteBatch.Draw(hint, new Vector2(cx - hint.Width / 2, cardY + cardH - 22), Color.White);
+        }
+
+        // ═══════════ Search Players ═══════════
+        void UpdateSearchPlayer()
+        {
+            bool shift = kb.IsKeyDown(Keys.LeftShift) || kb.IsKeyDown(Keys.RightShift);
+            if (kb.IsKeyDown(Keys.Escape) && !prevKb.IsKeyDown(Keys.Escape))
+            { state = GameState.Menu; return; }
+            if (kb.IsKeyDown(Keys.Back) && !prevKb.IsKeyDown(Keys.Back))
+            { if (searchQuery.Length > 0) searchQuery = searchQuery[..^1]; return; }
+            if (kb.IsKeyDown(Keys.Up) && !prevKb.IsKeyDown(Keys.Up))
+                searchSelectedIndex = Math.Max(0, searchSelectedIndex - 1);
+            if (kb.IsKeyDown(Keys.Down) && !prevKb.IsKeyDown(Keys.Down))
+                searchSelectedIndex = Math.Min(searchResults.Count - 1, searchSelectedIndex + 1);
+            if (kb.IsKeyDown(Keys.Enter) && !prevKb.IsKeyDown(Keys.Enter))
+            {
+                if (searchResults.Count > 0 && searchSelectedIndex >= 0 && searchSelectedIndex < searchResults.Count)
+                {
+                    // View selected player's profile
+                    var sel = searchResults[searchSelectedIndex];
+                    state = GameState.Profile;
+                    profileScrollIndex = 0;
+                    profileLoading = true;
+                    viewingProfile = null;
+                    if (cloudSync != null)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try { viewingProfile = await cloudSync.GetProfileAsync(sel.Username); }
+                            catch { }
+                            finally { profileLoading = false; }
+                        });
+                    }
+                }
+                else if (searchQuery.Length > 0 && cloudSync != null)
+                {
+                    // Search
+                    searchLoading = true;
+                    var q = searchQuery;
+                    _ = Task.Run(async () =>
+                    {
+                        try { searchResults = await cloudSync.SearchPlayersAsync(q); searchSelectedIndex = 0; }
+                        catch { searchResults.Clear(); }
+                        finally { searchLoading = false; }
+                    });
+                }
+                return;
+            }
+            foreach (Keys k in Enum.GetValues(typeof(Keys)))
+            {
+                if (k == Keys.None) continue;
+                if (kb.IsKeyDown(k) && !prevKb.IsKeyDown(k))
+                {
+                    char ch = KeyToChar(k, shift);
+                    if (ch != '\0') searchQuery += ch;
+                }
+            }
+        }
+
+        void DrawSearchPlayer()
+        {
+            spriteBatch!.Draw(pixel!, new Rectangle(0, 0, width, height), Color.Black * 0.7f);
+            int cx = width / 2;
+            int cardW = 520, cardH = height - 60;
+            int cardX = cx - cardW / 2, cardY = 30;
+
+            spriteBatch.Draw(pixel!, new Rectangle(cardX, cardY, cardW, cardH), new Color(14, 14, 32) * 0.96f);
+            DrawRectBorder(new Rectangle(cardX, cardY, cardW, cardH), new Color(0, 200, 255) * 0.15f);
+
+            var title = textRenderer!.GetTexture(Localization.Get("search_title"), "Segoe UI", 20, Color.White);
+            spriteBatch.Draw(title, new Vector2(cx - title.Width / 2, cardY + 12), Color.White);
+
+            // Search input
+            int inputY = cardY + 48;
+            int sx = cardX + 20, sw = cardW - 40;
+            var inputBox = new Rectangle(sx, inputY, sw, 30);
+            spriteBatch.Draw(pixel!, inputBox, Color.White * 0.04f);
+            DrawRectBorder(inputBox, new Color(0, 200, 255) * 0.3f);
+            var inputLabel = textRenderer!.GetTexture(Localization.Get("search_placeholder"), "Segoe UI", 11, new Color(80, 80, 110));
+            if (searchQuery.Length == 0)
+                spriteBatch.Draw(inputLabel, new Vector2(sx + 8, inputY + 7), Color.White);
+            else
+            {
+                var qt = textRenderer!.GetTexture(searchQuery, "Segoe UI", 14, Color.White);
+                spriteBatch.Draw(qt, new Vector2(sx + 8, inputY + 6), Color.White);
+            }
+
+            int ry = inputY + 40;
+
+            if (searchLoading)
+            {
+                var loading = textRenderer!.GetTexture(Localization.Get("search_loading"), "Segoe UI", 14, new Color(100, 100, 130));
+                spriteBatch.Draw(loading, new Vector2(cx - loading.Width / 2, ry), Color.White);
+            }
+            else if (searchResults.Count == 0 && searchQuery.Length > 0)
+            {
+                var noResult = textRenderer!.GetTexture(Localization.Get("search_no_results"), "Segoe UI", 14, new Color(100, 100, 130));
+                spriteBatch.Draw(noResult, new Vector2(cx - noResult.Width / 2, ry), Color.White);
+            }
+            else
+            {
+                for (int i = 0; i < searchResults.Count; i++)
+                {
+                    if (ry + 60 > cardY + cardH - 30) break;
+                    var r = searchResults[i];
+                    bool sel = i == searchSelectedIndex;
+
+                    var rowRect = new Rectangle(sx, ry, sw, 54);
+                    if (sel)
+                    {
+                        spriteBatch.Draw(pixel!, rowRect, new Color(0, 200, 255) * 0.08f);
+                        spriteBatch.Draw(pixel!, new Rectangle(sx, ry, 3, 54), new Color(0, 200, 255));
+                    }
+                    else
+                        spriteBatch.Draw(pixel!, rowRect, Color.White * 0.02f);
+                    DrawRectBorder(rowRect, sel ? new Color(0, 200, 255) * 0.15f : Color.White * 0.03f);
+
+                    // Avatar with preset style
+                    int avS = 36;
+                    int srAvIdx = Array.FindIndex(AvatarPresets, a => a.id == r.AvatarId);
+                    var srAvStyle = srAvIdx >= 0 ? AvatarPresets[srAvIdx] : AvatarPresets[0];
+                    spriteBatch.Draw(pixel!, new Rectangle(sx + 8, ry + 9, avS, avS), srAvStyle.bg);
+                    string srIcon = srAvStyle.icon != "" ? srAvStyle.icon : (r.Username.Length > 0 ? r.Username[0].ToString().ToUpper() : "?");
+                    var avLetter = textRenderer!.GetTexture(srIcon, "Segoe UI", 18, srAvStyle.fg);
+                    spriteBatch.Draw(avLetter, new Vector2(sx + 8 + (avS - avLetter.Width) / 2, ry + 9 + (avS - avLetter.Height) / 2), Color.White);
+
+                    // Name + badges
+                    var nameT = textRenderer!.GetTexture(r.Username, "Segoe UI", 15, Color.White);
+                    spriteBatch.Draw(nameT, new Vector2(sx + 52, ry + 6), Color.White);
+
+                    int bx = sx + 52 + nameT.Width + 8;
+                    foreach (var badge in r.Badges)
+                    {
+                        Color bc = ParseHexColor(badge.BadgeColor);
+                        var bt = textRenderer!.GetTexture(badge.BadgeName, "Segoe UI", 9, Color.White);
+                        int bw = bt.Width + 8;
+                        spriteBatch.Draw(pixel!, new Rectangle(bx, ry + 9, bw, 16), bc * 0.3f);
+                        DrawRectBorder(new Rectangle(bx, ry + 9, bw, 16), bc * 0.5f);
+                        spriteBatch.Draw(bt, new Vector2(bx + 4, ry + 11), Color.White);
+                        bx += bw + 4;
+                    }
+
+                    // Stats line
+                    string statsLine = $"{Localization.Get("total_plays")}: {r.TotalPlays}   {Localization.Get("best_combo")}: {r.BestCombo}x   {Localization.Get("avg_accuracy")}: {r.AvgAccuracy:F1}%";
+                    var statsT = textRenderer!.GetTexture(statsLine, "Segoe UI", 10, new Color(120, 120, 150));
+                    spriteBatch.Draw(statsT, new Vector2(sx + 52, ry + 28), Color.White);
+
+                    if (!string.IsNullOrEmpty(r.Region))
+                    {
+                        var regT = textRenderer!.GetTexture(r.Region, "Segoe UI", 10, new Color(100, 100, 130));
+                        spriteBatch.Draw(regT, new Vector2(sx + sw - regT.Width - 8, ry + 8), Color.White);
+                    }
+
+                    ry += 58;
+                }
+            }
+
+            var hint = textRenderer!.GetTexture(Localization.Get("hint_search"), "Segoe UI", 11, new Color(80, 80, 110));
+            spriteBatch.Draw(hint, new Vector2(cx - hint.Width / 2, cardY + cardH - 22), Color.White);
+        }
+
+        static Color ParseHexColor(string hex)
+        {
+            if (string.IsNullOrEmpty(hex) || hex[0] != '#' || hex.Length < 7) return new Color(255, 215, 0);
+            try
+            {
+                int r = Convert.ToInt32(hex.Substring(1, 2), 16);
+                int g = Convert.ToInt32(hex.Substring(3, 2), 16);
+                int b = Convert.ToInt32(hex.Substring(5, 2), 16);
+                return new Color(r, g, b);
+            }
+            catch { return new Color(255, 215, 0); }
         }
     }
 }
