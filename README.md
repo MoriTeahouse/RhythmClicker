@@ -1,8 +1,8 @@
-# RhythmClicker — 核心匯出
+# RhythmClicker — 節奏遊戲
 
-本倉庫只包含 RhythmClicker 原型的核心原始碼（遊戲循環、beatmap 處理、基本 UI 與本機帳號管理）。
+> **這是第一個測試版（v0.1-alpha）。** 遊戲仍在開發中，歡迎回報問題與建議。
 
-重要說明：遊戲仍在開發中，非完整版本。UI、資源、音訊與更多功能仍需補完與優化。
+一款使用 MonoGame (DesktopGL) 建置的節奏遊戲，具備現代化暗色 UI、多語言支援（English / 繁中-台灣 / 簡中-中國大陸 / 繁中-香港 / English-US）以及帳號系統。
 
 請參閱 `DEVELOPMENT.md` 與 `CONTRIBUTING.md` 取得建置、執行與協作說明。
 
