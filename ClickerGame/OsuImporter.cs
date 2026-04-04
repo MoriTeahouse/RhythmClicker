@@ -1,16 +1,73 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 
 namespace ClickerGame
 {
     /// <summary>
-    /// Imports osu! .osu beatmap files and converts them to the game's Beatmap format.
+    /// Imports osu! .osz packages and .osu beatmap files, converting them to the game's Beatmap format.
     /// Supports osu!mania (mode 3) natively and converts standard/taiko/catch modes to 4-lane.
     /// </summary>
     public static class OsuImporter
     {
+        /// <summary>
+        /// Import an .osz package (ZIP). Extracts audio + all .osu difficulties.
+        /// Returns list of (Beatmap, difficultyLabel) for each .osu found.
+        /// Audio file is extracted to assetsDir.
+        /// </summary>
+        public static List<(Beatmap beatmap, string diffLabel)> ImportOsz(string oszPath, string assetsDir)
+        {
+            var results = new List<(Beatmap, string)>();
+            string tempDir = Path.Combine(Path.GetTempPath(), "rc_osz_" + Path.GetFileNameWithoutExtension(oszPath));
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+
+            try
+            {
+                ZipFile.ExtractToDirectory(oszPath, tempDir);
+
+                // Find all .osu files
+                var osuFiles = Directory.GetFiles(tempDir, "*.osu");
+                if (osuFiles.Length == 0) return results;
+
+                string? audioFileCopied = null;
+
+                foreach (var osuFile in osuFiles)
+                {
+                    var bm = Import(osuFile);
+
+                    // Extract difficulty label from .osu filename: "Artist - Title (mapper) [DiffName].osu"
+                    string fname = Path.GetFileNameWithoutExtension(osuFile);
+                    string diffLabel = "easy";
+                    int bracketStart = fname.LastIndexOf('[');
+                    int bracketEnd = fname.LastIndexOf(']');
+                    if (bracketStart >= 0 && bracketEnd > bracketStart)
+                        diffLabel = fname.Substring(bracketStart + 1, bracketEnd - bracketStart - 1).Trim();
+
+                    // Copy audio once
+                    if (audioFileCopied == null && !string.IsNullOrEmpty(bm.AudioFile))
+                    {
+                        string audioSrc = Path.Combine(tempDir, bm.AudioFile);
+                        if (File.Exists(audioSrc))
+                        {
+                            string audioDest = Path.Combine(assetsDir, bm.AudioFile);
+                            if (!File.Exists(audioDest)) File.Copy(audioSrc, audioDest, false);
+                            audioFileCopied = bm.AudioFile;
+                        }
+                    }
+
+                    results.Add((bm, diffLabel));
+                }
+            }
+            finally
+            {
+                try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { }
+            }
+
+            return results;
+        }
+
         public static Beatmap Import(string osuFilePath)
         {
             var lines = File.ReadAllLines(osuFilePath);

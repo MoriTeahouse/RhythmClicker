@@ -229,7 +229,59 @@ namespace ClickerGame
             string f = e.Files[0];
             string ext = Path.GetExtension(f).ToLowerInvariant();
 
-            // osu! file import (works from menu or editor)
+            // osu! .osz package import (ZIP containing .osu + audio)
+            if (ext == ".osz")
+            {
+                try
+                {
+                    var imported = OsuImporter.ImportOsz(f, "Assets");
+                    if (imported.Count == 0) return;
+
+                    // Use first beatmap for metadata
+                    var first = imported[0].beatmap;
+                    string safeId = (first.Name ?? "osu_import").Trim().ToLowerInvariant()
+                        .Replace(' ', '_').Replace("'", "").Replace("\"", "");
+                    if (string.IsNullOrEmpty(safeId)) safeId = "osu_import_" + DateTime.Now.Ticks;
+
+                    // Sanitize difficulty labels and save each as .rcm
+                    var difficulties = new List<string>();
+                    foreach (var (bm, diffLabel) in imported)
+                    {
+                        string safeDiff = diffLabel.Trim().ToLowerInvariant()
+                            .Replace(' ', '_').Replace("'", "").Replace("\"", "");
+                        if (string.IsNullOrEmpty(safeDiff)) safeDiff = "easy";
+
+                        // Avoid duplicate difficulty names
+                        string finalDiff = safeDiff;
+                        int dup = 1;
+                        while (difficulties.Contains(finalDiff))
+                            finalDiff = safeDiff + "_" + (++dup);
+
+                        string rcmPath = Path.Combine("Assets", $"{safeId}_{finalDiff}.rcm");
+                        RcFileManager.WriteBeatmap(rcmPath, bm);
+                        difficulties.Add(finalDiff);
+                    }
+
+                    // Add to songs.json
+                    string audioFile = first.AudioFile ?? "song1.wav";
+                    if (!File.Exists(Path.Combine("Assets", audioFile))) audioFile = "song1.wav";
+
+                    if (!songs.Any(s => s.Id == safeId))
+                    {
+                        songs.Add(new SongInfo { Id = safeId, Title = first.Name ?? safeId,
+                            File = audioFile, Difficulties = difficulties });
+                        var opts = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+                        File.WriteAllText("Assets/songs.json", System.Text.Json.JsonSerializer.Serialize(songs, opts));
+                        currentSongIndex = songs.Count - 1;
+                        currentDifficulty = difficulties[0];
+                        LoadCurrentSong();
+                    }
+                }
+                catch { }
+                return;
+            }
+
+            // osu! single .osu file import
             if (ext == ".osu")
             {
                 try
