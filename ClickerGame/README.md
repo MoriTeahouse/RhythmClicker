@@ -1,6 +1,8 @@
-# ClickerGame — MonoGame 範例節奏遊戲
+# ClickerGame — MonoGame 節奏遊戲
 
-這是一個極簡的節奏遊戲範例，使用 MonoGame (DesktopGL) 建置。專案包含：
+> **這是第一個測試版（v0.1-alpha）。** 遊戲仍在開發中，歡迎回報問題與建議。
+
+這是一款使用 MonoGame (DesktopGL) 建置的節奏遊戲，具備現代化暗色 UI、多語言支援以及帳號系統。
 
 - 一個最小可運行的 MonoGame 專案 (`ClickerGame.csproj`)。
 - 簡單的落點節奏遊戲核心（在 `Game1.cs`）。
