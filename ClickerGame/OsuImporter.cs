@@ -17,9 +17,9 @@ namespace ClickerGame
         /// <summary>
         /// Import an .osz package (ZIP). Extracts audio + all .osu difficulties.
         /// Returns list of (Beatmap, difficultyLabel) for each .osu found.
-        /// Audio file is extracted to assetsDir.
+        /// Audio file is extracted to assetsDir with a unique name based on songId.
         /// </summary>
-        public static List<(Beatmap beatmap, string diffLabel)> ImportOsz(string oszPath, string assetsDir)
+        public static List<(Beatmap beatmap, string diffLabel)> ImportOsz(string oszPath, string assetsDir, string? songId = null)
         {
             var results = new List<(Beatmap, string)>();
             string tempDir = Path.Combine(Path.GetTempPath(), "rc_osz_" + Path.GetFileNameWithoutExtension(oszPath));
@@ -47,13 +47,15 @@ namespace ClickerGame
                     if (bracketStart >= 0 && bracketEnd > bracketStart)
                         diffLabel = fname.Substring(bracketStart + 1, bracketEnd - bracketStart - 1).Trim();
 
-                    // Copy audio once (convert to WAV if needed)
+                    // Copy audio once (convert to WAV if needed), use unique name per song
                     if (audioFileCopied == null && !string.IsNullOrEmpty(bm.AudioFile))
                     {
                         string audioSrc = Path.Combine(tempDir, bm.AudioFile);
                         if (File.Exists(audioSrc))
                         {
-                            string wavName = Path.GetFileNameWithoutExtension(bm.AudioFile) + ".wav";
+                            // Use songId as prefix to avoid collision (e.g. multiple songs with "audio.mp3")
+                            string prefix = !string.IsNullOrEmpty(songId) ? songId + "_" : "";
+                            string wavName = prefix + Path.GetFileNameWithoutExtension(bm.AudioFile) + ".wav";
                             string audioDest = Path.Combine(assetsDir, wavName);
                             if (!File.Exists(audioDest))
                                 ConvertToWav(audioSrc, audioDest);

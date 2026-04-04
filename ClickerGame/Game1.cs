@@ -234,14 +234,20 @@ namespace ClickerGame
             {
                 try
                 {
-                    var imported = OsuImporter.ImportOsz(f, "Assets");
+                    // Pre-compute songId for unique audio naming
+                    string tempDir = Path.Combine(Path.GetTempPath(), "rc_osz_peek_" + Path.GetFileNameWithoutExtension(f));
+                    string previewId = Path.GetFileNameWithoutExtension(f).Trim().ToLowerInvariant()
+                        .Replace(' ', '_').Replace("'", "").Replace("\"", "");
+                    if (string.IsNullOrEmpty(previewId)) previewId = "osu_import_" + DateTime.Now.Ticks;
+
+                    var imported = OsuImporter.ImportOsz(f, "Assets", previewId);
                     if (imported.Count == 0) return;
 
                     // Use first beatmap for metadata
                     var first = imported[0].beatmap;
-                    string safeId = (first.Name ?? "osu_import").Trim().ToLowerInvariant()
+                    string safeId = (first.Name ?? previewId).Trim().ToLowerInvariant()
                         .Replace(' ', '_').Replace("'", "").Replace("\"", "");
-                    if (string.IsNullOrEmpty(safeId)) safeId = "osu_import_" + DateTime.Now.Ticks;
+                    if (string.IsNullOrEmpty(safeId)) safeId = previewId;
 
                     // Sanitize difficulty labels and save each as .rcm
                     var difficulties = new List<string>();
@@ -272,10 +278,12 @@ namespace ClickerGame
                             File = audioFile, Difficulties = difficulties });
                         var opts = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
                         File.WriteAllText("Assets/songs.json", System.Text.Json.JsonSerializer.Serialize(songs, opts));
-                        currentSongIndex = songs.Count - 1;
-                        currentDifficulty = difficulties[0];
-                        LoadCurrentSong();
                     }
+                    // Always switch to the imported song and reload
+                    currentSongIndex = songs.FindIndex(s => s.Id == safeId);
+                    if (currentSongIndex < 0) currentSongIndex = songs.Count - 1;
+                    currentDifficulty = difficulties[0];
+                    LoadCurrentSong();
                 }
                 catch { }
                 return;
@@ -296,7 +304,8 @@ namespace ClickerGame
                     string wavName = "";
                     if (!string.IsNullOrEmpty(imported.AudioFile) && File.Exists(audioSrc))
                     {
-                        wavName = Path.GetFileNameWithoutExtension(imported.AudioFile) + ".wav";
+                        // Use safeId prefix for unique audio filename
+                        wavName = safeId + "_" + Path.GetFileNameWithoutExtension(imported.AudioFile) + ".wav";
                         string audioDest = Path.Combine("Assets", wavName);
                         if (!File.Exists(audioDest))
                         {
