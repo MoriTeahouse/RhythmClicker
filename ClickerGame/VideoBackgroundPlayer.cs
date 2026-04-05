@@ -41,21 +41,36 @@ namespace ClickerGame
         {
             try
             {
-                // Look for FFmpeg DLLs in app directory, then common paths
-                string appDir = AppDomain.CurrentDomain.BaseDirectory;
-                string ffmpegDir = Path.Combine(appDir, "ffmpeg");
-                if (!Directory.Exists(ffmpegDir))
-                    ffmpegDir = appDir;
+                string? ffmpegDir = null;
 
-                // Check if the required DLL exists
-                bool found = File.Exists(Path.Combine(ffmpegDir, "avcodec-61.dll"))
-                          || File.Exists(Path.Combine(ffmpegDir, "avcodec-60.dll"))
-                          || File.Exists(Path.Combine(ffmpegDir, "avcodec-59.dll"))
-                          || File.Exists(Path.Combine(ffmpegDir, "avcodec.dll"));
-
-                if (!found)
+                // 1. Check NATIVE_DLL_SEARCH_DIRECTORIES (works for single-file publish)
+                var nativeDirs = AppContext.GetData("NATIVE_DLL_SEARCH_DIRECTORIES") as string;
+                if (!string.IsNullOrEmpty(nativeDirs))
                 {
-                    // Try PATH
+                    foreach (var dir in nativeDirs.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        if (Directory.Exists(dir) && File.Exists(Path.Combine(dir, "avcodec-61.dll")))
+                        { ffmpegDir = dir; break; }
+                    }
+                }
+
+                // 2. Check app directory and ffmpeg subfolder
+                if (ffmpegDir == null)
+                {
+                    string appDir = AppDomain.CurrentDomain.BaseDirectory;
+                    foreach (var candidate in new[] { appDir, Path.Combine(appDir, "ffmpeg") })
+                    {
+                        if (Directory.Exists(candidate) && (
+                            File.Exists(Path.Combine(candidate, "avcodec-61.dll")) ||
+                            File.Exists(Path.Combine(candidate, "avcodec-60.dll")) ||
+                            File.Exists(Path.Combine(candidate, "avcodec-59.dll"))))
+                        { ffmpegDir = candidate; break; }
+                    }
+                }
+
+                // 3. Check PATH
+                if (ffmpegDir == null)
+                {
                     string? pathEnv = Environment.GetEnvironmentVariable("PATH");
                     if (pathEnv != null)
                     {
@@ -63,18 +78,13 @@ namespace ClickerGame
                         {
                             if (Directory.Exists(dir) && (
                                 File.Exists(Path.Combine(dir, "avcodec-61.dll")) ||
-                                File.Exists(Path.Combine(dir, "avcodec-60.dll")) ||
-                                File.Exists(Path.Combine(dir, "avcodec-59.dll"))))
-                            {
-                                ffmpegDir = dir;
-                                found = true;
-                                break;
-                            }
+                                File.Exists(Path.Combine(dir, "avcodec-60.dll"))))
+                            { ffmpegDir = dir; break; }
                         }
                     }
                 }
 
-                if (found)
+                if (ffmpegDir != null)
                 {
                     FFMediaToolkit.FFmpegLoader.FFmpegPath = ffmpegDir;
                     _ffmpegAvailable = true;
