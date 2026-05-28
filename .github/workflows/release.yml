@@ -100,4 +100,31 @@ jobs:
           files: |
             RhythmClicker.zip
             RhythmClickerLauncher.exe
-          generate_release_notes: true
+          body: |
+            ## v0.5 更新內容
+
+            ### 新功能
+
+            - RhythmClicker Launcher — 獨立下載助手，玩家首次使用時透過 Launcher 選擇安裝槽位並下載遊戲
+            - 遊戲內自動更新 — 偵測到新版本後在遊戲內提示，下載完成後詢問是否重啟
+            - 選單按鈕圖示 — 每個選單項目首端顯示對應圖示，提升視覺辨識度
+            - 安裝路徑管理 — 遊戲資料夾統一由 AppPaths 管理，支援 Launcher 指定的安裝槽位
+
+            ### 架構重構
+
+            - Game1.cs 從 3400 行拆分為 16 個 Partial Class 檔案，分置於 Screens/、Audio/、Helpers/ 資料夾
+            - 所有管理器(AccountsManager、StatsDatabase 等)改用 AppPaths 路徑，不再硬寫路徑
+
+            ### 改進
+
+            - 升級至 .NET 8（原 .NET 6 已終止支援）
+            - 新增 GitHub Actions 自動打包並發布 Release 流程
+
+            ### 修復
+
+            - Launcher 啟動遊戲時正確使用執行檔名稱 ClickerGame.exe
+
+            ### 下載
+
+            - `RhythmClicker.zip` — 遊戲本體 (Windows x64，免安裝 .NET)
+            - `RhythmClickerLauncher.exe` — 下載助手 (Windows x64，首次安裝用)
