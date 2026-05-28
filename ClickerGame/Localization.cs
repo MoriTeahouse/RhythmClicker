@@ -207,6 +207,23 @@ namespace ClickerGame
                 "\u2191\u2193/Tab \u5207\u63db   \u25C0\u25B6 \u9078\u64c7   Ctrl+S \u5132\u5b58   Esc \u8fd4\u56de",
                 "\u2191\u2193/Tab \u5207\u6362   \u25C0\u25B6 \u9009\u62e9   Ctrl+S \u4fdd\u5b58   Esc \u8fd4\u56de",
                 "\u2191\u2193/Tab \u5207\u63db   \u25C0\u25B6 \u9078\u64c7   Ctrl+S \u5132\u5b58   Esc \u8fd4\u56de"),
+            // Update system
+            ["menu_update"] = L("Update Available!", "Update Available!", "\u6709\u65b0\u7248\u672c\uff01", "\u6709\u65b0\u7248\u672c\uff01", "\u6709\u65b0\u7248\u672c\uff01"),
+            ["update_available_msg"] = L(
+                "Version {0} is available. Download now?",
+                "Version {0} is available. Download now?",
+                "\u7248\u672c {0} \u5df2\u53ef\u7528\uff0c\u662f\u5426\u7acb\u5373\u4e0b\u8f09\uff1f",
+                "\u7248\u672c {0} \u5df2\u53ef\u7528\uff0c\u662f\u5426\u7acb\u5373\u4e0b\u8f7d\uff1f",
+                "\u7248\u672c {0} \u5df2\u53ef\u7528\uff0c\u662f\u5426\u7acb\u5373\u4e0b\u8f09\uff1f"),
+            ["update_restart_title"] = L("Restart Required", "Restart Required", "\u9700\u8981\u91cd\u65b0\u555f\u52d5", "\u9700\u8981\u91cd\u65b0\u542f\u52a8", "\u9700\u8981\u91cd\u65b0\u555f\u52d5"),
+            ["update_restart_msg"] = L(
+                "Update complete! Restart now to apply changes?",
+                "Update complete! Restart now to apply changes?",
+                "\u66f4\u65b0\u5b8c\u6210\uff01\u662f\u5426\u7acb\u5373\u91cd\u65b0\u555f\u52d5\u4ee5\u5957\u7528\u8b8a\u66f4\uff1f",
+                "\u66f4\u65b0\u5b8c\u6210\uff01\u662f\u5426\u7acb\u5373\u91cd\u65b0\u542f\u52a8\u4ee5\u5e94\u7528\u53d8\u66f4\uff1f",
+                "\u66f4\u65b0\u5b8c\u6210\uff01\u662f\u5426\u7acb\u5373\u91cd\u65b0\u555f\u52d5\u4ee5\u5957\u7528\u8b8a\u66f4\uff1f"),
+            ["update_downloading"] = L("Downloading update...", "Downloading update...", "\u4e0b\u8f09\u66f4\u65b0\u4e2d...", "\u4e0b\u8f7d\u66f4\u65b0\u4e2d...", "\u4e0b\u8f09\u66f4\u65b0\u4e2d..."),
+            ["update_complete"] = L("Update complete!", "Update complete!", "\u66f4\u65b0\u5b8c\u6210\uff01", "\u66f4\u65b0\u5b8c\u6210\uff01", "\u66f4\u65b0\u5b8c\u6210\uff01"),
         };
 
         // Helper to create language dictionaries concisely

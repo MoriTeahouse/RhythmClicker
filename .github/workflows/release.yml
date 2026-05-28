@@ -1,0 +1,103 @@
+name: Build & Release
+
+# Trigger: push any tag starting with 'v' (e.g. v0.3, v1.0.0)
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # needed to create a release and push version.json
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────────
+      - uses: actions/checkout@v4
+        with:
+          # Full history + permission to push version.json back to main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── .NET ──────────────────────────────────────────────────────────────────
+      - name: Setup .NET 6
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+
+      # ── Restore ───────────────────────────────────────────────────────────────
+      - name: Restore NuGet packages
+        run: dotnet restore ClickerGame.sln
+
+      # ── Publish game (self-contained, single-file) ────────────────────────────
+      - name: Publish ClickerGame
+        run: >
+          dotnet publish ClickerGame/ClickerGame.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -o publish/game
+
+      # ── Publish launcher (self-contained, single-file) ────────────────────────
+      - name: Publish ClickerLauncher
+        run: >
+          dotnet publish ClickerLauncher/ClickerLauncher.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -o publish/launcher
+
+      # ── version.json ──────────────────────────────────────────────────────────
+      # This file is placed in the repo root so the in-game updater can fetch it
+      # from: https://raw.githubusercontent.com/keeiv/RhythmClicker/main/version.json
+      - name: Write version.json
+        shell: pwsh
+        run: |
+          $tag  = "${{ github.ref_name }}"
+          $repo = "${{ github.repository }}"
+          $obj  = [ordered]@{
+            version      = $tag
+            download_url = "https://github.com/$repo/releases/download/$tag/RhythmClicker.zip"
+          }
+          $obj | ConvertTo-Json | Set-Content -Path version.json -Encoding utf8NoBOM
+          # Also embed a copy inside the game folder so AppPaths.ReadCurrentVersion() works
+          Copy-Item version.json publish/game/version.json
+
+      # ── Package ───────────────────────────────────────────────────────────────
+      - name: Create game ZIP (RhythmClicker.zip)
+        shell: pwsh
+        run: Compress-Archive -Path publish/game/* -DestinationPath RhythmClicker.zip
+
+      - name: Rename launcher executable
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem publish/launcher/*.exe | Select-Object -First 1
+          if ($exe) {
+            Copy-Item $exe.FullName -Destination RhythmClickerLauncher.exe
+          } else {
+            throw "Launcher exe not found in publish/launcher/"
+          }
+
+      # ── Commit version.json back to main ──────────────────────────────────────
+      - name: Commit version.json to main branch
+        shell: pwsh
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.json
+          git diff --cached --quiet && echo "version.json unchanged" || (
+            git commit -m "chore: bump version.json to ${{ github.ref_name }}"
+            git push origin HEAD:main
+          )
+
+      # ── GitHub Release ────────────────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            RhythmClicker.zip
+            RhythmClickerLauncher.exe
+          generate_release_notes: true
