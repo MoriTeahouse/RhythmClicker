@@ -19,7 +19,7 @@ namespace ClickerLauncher
         // ── Configuration ─────────────────────────────────────────────────────
         // Update this URL to point at the publicly hosted game ZIP.
         private const string GameDownloadUrl =
-            "https://github.com/keeiv/RhythmClicker/releases/latest/download/RhythmClicker.zip";
+            "https://github.com/MoriTeahouse/RhythmClicker/releases/latest/download/RhythmClicker.zip";
 
         // Name of the game executable inside the extracted ZIP.
         private const string GameExeName = "RhythmClicker.exe";

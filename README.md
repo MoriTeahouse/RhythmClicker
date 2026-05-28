@@ -4,12 +4,12 @@
 
 ## 下載
 
-**[下載最新版本 (Windows x64)](https://github.com/keeiv/RhythmClicker/releases/latest)** — 解壓縮後直接執行 `ClickerGame.exe`，不需安裝 .NET。
+**[下載最新版本 (Windows x64)](https://github.com/MoriTeahouse/RhythmClicker/releases/latest)** — 解壓縮後直接執行 `ClickerGame.exe`，不需安裝 .NET。
 
 ## 快速開始
 
 ```bash
-git clone https://github.com/keeiv/RhythmClicker.git
+git clone https://github.com/MoriTeahouse/RhythmClicker.git
 cd RhythmClicker
 dotnet restore ClickerGame/ClickerGame.csproj
 dotnet run --project ClickerGame/ClickerGame.csproj

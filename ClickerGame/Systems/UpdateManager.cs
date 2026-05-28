@@ -20,7 +20,7 @@ namespace ClickerGame.Systems
         // Point this at your own manifest JSON (GitHub raw, CDN, etc.).
         // The file must contain { "version": "1.2.3", "download_url": "https://..." }
         public const string ManifestUrl =
-            "https://raw.githubusercontent.com/keeiv/RhythmClicker/main/version.json";
+            "https://raw.githubusercontent.com/MoriTeahouse/RhythmClicker/main/version.json";
 
         // ── State ─────────────────────────────────────────────────────────────────
         public static bool IsUpdateAvailable { get; private set; }
