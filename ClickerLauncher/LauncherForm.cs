@@ -18,11 +18,16 @@ namespace ClickerLauncher
     {
         // ── Configuration ─────────────────────────────────────────────────────
         // Update this URL to point at the publicly hosted game ZIP.
+        // NOTE: Set to localhost for local testing; switch back before release.
         private const string GameDownloadUrl =
+#if DEBUG
+            "http://localhost:9090/rc_test.zip";
+#else
             "https://github.com/MoriTeahouse/RhythmClicker/releases/latest/download/RhythmClicker.zip";
+#endif
 
         // Name of the game executable inside the extracted ZIP.
-        private const string GameExeName = "RhythmClicker.exe";
+        private const string GameExeName = "ClickerGame.exe";
 
         // Relative marker file written by the launcher so the game knows its root.
         private const string InstallPathMarker = "install_path.txt";
