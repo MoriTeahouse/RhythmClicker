@@ -83,20 +83,25 @@ jobs:
 
       # ── Commit version.json back to main ──────────────────────────────────────
       - name: Commit version.json to main branch
+        continue-on-error: true
         shell: pwsh
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add version.json
-          git diff --cached --quiet && echo "version.json unchanged" || (
+          $diff = git diff --cached --quiet; $LASTEXITCODE
+          if ($LASTEXITCODE -ne 0) {
             git commit -m "chore: bump version.json to ${{ github.ref_name }}"
             git push origin HEAD:main
-          )
+          } else {
+            Write-Host "version.json already up to date, skipping push"
+          }
 
       # ── GitHub Release ────────────────────────────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           files: |
             RhythmClicker.zip
             RhythmClickerLauncher.exe
