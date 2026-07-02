@@ -8,6 +8,7 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using Microsoft.Xna.Framework.Audio;
+using MatrixTea.Engine.Core.Rhythm;
 
 namespace ClickerGame
 {
@@ -19,6 +20,7 @@ namespace ClickerGame
         int width = 800, height = 600;
         Beatmap? beatmap;
         LinkedList<Note> notes = new();
+        RhythmPlaySession<Note>? rhythmSession;
         SoundEffect? songEffect;
         SoundEffectInstance? songInstance;
 
@@ -218,168 +220,117 @@ namespace ClickerGame
             public List<string> Difficulties { get; set; } = new();
         }
 
-        public Game1()
-        {
-            graphics = new GraphicsDeviceManager(this);
-            Content.RootDirectory = "Content";
-            graphics.PreferredBackBufferWidth = width;
-            graphics.PreferredBackBufferHeight = height;
-        }
-
-        protected override void Initialize()
-        {
-            IsMouseVisible = true;
-            Window.Title = "RhythmClicker";
-            Window.AllowUserResizing = false;
-
-            // File drop for editor audio import
-            Window.FileDrop += OnFileDrop;
-
-            base.Initialize();
-        }
-
         void OnFileDrop(object? sender, FileDropEventArgs e)
         {
-            if (e.Files == null || e.Files.Length == 0) return;
-            string f = e.Files[0];
-            string ext = Path.GetExtension(f).ToLowerInvariant();
+            if (e.Files == null || e.Files.Length == 0)
+            {
+                return;
+            }
 
-            // osu! .osz package import (ZIP containing .osu + audio)
-            if (ext == ".osz")
+            string filePath = e.Files[0];
+            string extension = Path.GetExtension(filePath).ToLowerInvariant();
+
+            if (extension == ".osz")
             {
                 try
                 {
-                    // Pre-compute songId for unique audio naming
-                    string tempDir = Path.Combine(Path.GetTempPath(), "rc_osz_peek_" + Path.GetFileNameWithoutExtension(f));
-                    string previewId = Path.GetFileNameWithoutExtension(f).Trim().ToLowerInvariant()
-                        .Replace(' ', '_').Replace("'", "").Replace("\"", "");
-                    if (string.IsNullOrEmpty(previewId)) previewId = "osu_import_" + DateTime.Now.Ticks;
-
-                    var imported = OsuImporter.ImportOsz(f, "Assets", previewId);
-                    if (imported.Count == 0) return;
-
-                    // Use first beatmap for metadata
-                    var first = imported[0].beatmap;
-                    string safeId = (first.Name ?? previewId).Trim().ToLowerInvariant()
-                        .Replace(' ', '_').Replace("'", "").Replace("\"", "");
-                    if (string.IsNullOrEmpty(safeId)) safeId = previewId;
-
-                    // Sanitize difficulty labels and save each as .rcm
-                    var difficulties = new List<string>();
-                    foreach (var (bm, diffLabel) in imported)
+                    string previewId = Path.GetFileNameWithoutExtension(filePath).Trim().ToLowerInvariant()
+                        .Replace(' ', '_').Replace("'", string.Empty).Replace("\"", string.Empty);
+                    if (string.IsNullOrEmpty(previewId))
                     {
-                        string safeDiff = diffLabel.Trim().ToLowerInvariant()
-                            .Replace(' ', '_').Replace("'", "").Replace("\"", "");
-                        if (string.IsNullOrEmpty(safeDiff)) safeDiff = "easy";
-
-                        // Avoid duplicate difficulty names
-                        string finalDiff = safeDiff;
-                        int dup = 1;
-                        while (difficulties.Contains(finalDiff))
-                            finalDiff = safeDiff + "_" + (++dup);
-
-                        string rcmPath = Path.Combine("Assets", $"{safeId}_{finalDiff}.rcm");
-                        RcFileManager.WriteBeatmap(rcmPath, bm);
-                        difficulties.Add(finalDiff);
+                        previewId = "osu_import_" + DateTime.Now.Ticks;
                     }
 
-                    // Add to songs.json
-                    string audioFile = first.AudioFile ?? "song1.wav";
-                    if (!File.Exists(Path.Combine("Assets", audioFile))) audioFile = "song1.wav";
-
-                    if (!songs.Any(s => s.Id == safeId))
+                    var imported = OsuImporter.ImportOsz(filePath, "Assets", previewId);
+                    if (imported.Count == 0)
                     {
-                        songs.Add(new SongInfo { Id = safeId, Title = first.Name ?? safeId,
-                            File = audioFile, Difficulties = difficulties });
-                        var opts = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-                        File.WriteAllText("Assets/songs.json", System.Text.Json.JsonSerializer.Serialize(songs, opts));
+                        return;
                     }
-                    // Always switch to the imported song and reload
-                    currentSongIndex = songs.FindIndex(s => s.Id == safeId);
-                    if (currentSongIndex < 0) currentSongIndex = songs.Count - 1;
-                    currentDifficulty = difficulties[0];
+
+                    var firstBeatmap = imported[0].beatmap;
+                    string safeId = (firstBeatmap.Name ?? previewId).Trim().ToLowerInvariant()
+                        .Replace(' ', '_').Replace("'", string.Empty).Replace("\"", string.Empty);
+                    if (string.IsNullOrEmpty(safeId))
+                    {
+                        safeId = previewId;
+                    }
+
+                    string rcmPath = Path.Combine("Assets", safeId + "_easy.rcm");
+                    RcFileManager.WriteBeatmap(rcmPath, firstBeatmap);
+
+                    string audioFile = firstBeatmap.AudioFile ?? string.Empty;
+                    if (string.IsNullOrEmpty(audioFile))
+                    {
+                        audioFile = "song1.wav";
+                    }
+
+                    if (!songs.Any(song => song.Id == safeId))
+                    {
+                        songs.Add(new SongInfo
+                        {
+                            Id = safeId,
+                            Title = firstBeatmap.Name ?? safeId,
+                            File = audioFile,
+                            Difficulties = new List<string> { "easy" },
+                        });
+
+                        var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+                        File.WriteAllText("Assets/songs.json", System.Text.Json.JsonSerializer.Serialize(songs, options));
+                    }
+
+                    currentSongIndex = songs.Count - 1;
+                    currentDifficulty = "easy";
                     LoadCurrentSong();
                 }
-                catch { }
+                catch
+                {
+                }
+
                 return;
             }
 
-            // osu! single .osu file import
-            if (ext == ".osu")
+            if (state != GameState.BeatmapEditor)
             {
-                try
-                {
-                    var imported = OsuImporter.Import(f);
-                    string safeId = (imported.Name ?? "osu_import").Trim().ToLowerInvariant().Replace(' ', '_');
-                    if (string.IsNullOrEmpty(safeId)) safeId = "osu_import_" + DateTime.Now.Ticks;
-
-                    // Copy audio file if exists alongside .osu (convert to WAV if needed)
-                    string osuDir = Path.GetDirectoryName(f) ?? ".";
-                    string audioSrc = Path.Combine(osuDir, imported.AudioFile ?? "");
-                    string wavName = "";
-                    if (!string.IsNullOrEmpty(imported.AudioFile) && File.Exists(audioSrc))
-                    {
-                        // Use safeId prefix for unique audio filename
-                        wavName = safeId + "_" + Path.GetFileNameWithoutExtension(imported.AudioFile) + ".wav";
-                        string audioDest = Path.Combine("Assets", wavName);
-                        if (!File.Exists(audioDest))
-                        {
-                            string ext2 = Path.GetExtension(audioSrc).ToLowerInvariant();
-                            if (ext2 == ".wav") File.Copy(audioSrc, audioDest, false);
-                            else
-                            {
-                                try { OsuImporter.ConvertToWavPublic(audioSrc, audioDest); }
-                                catch { wavName = ""; }
-                            }
-                        }
-                    }
-
-                    // Save as .rcm
-                    string rcmPath = Path.Combine("Assets", safeId + "_easy.rcm");
-                    RcFileManager.WriteBeatmap(rcmPath, imported);
-
-                    // Add to songs.json
-                    string audioFile = !string.IsNullOrEmpty(wavName) ? wavName : "song1.wav";
-                    if (!songs.Any(s => s.Id == safeId))
-                    {
-                        songs.Add(new SongInfo { Id = safeId, Title = imported.Name ?? safeId,
-                            File = audioFile, Difficulties = new List<string> { "easy" } });
-                        var opts = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-                        File.WriteAllText("Assets/songs.json", System.Text.Json.JsonSerializer.Serialize(songs, opts));
-                        currentSongIndex = songs.Count - 1;
-                        currentDifficulty = "easy";
-                        LoadCurrentSong();
-                    }
-                }
-                catch { }
                 return;
             }
 
-            if (state != GameState.BeatmapEditor) return;
-            if (ext == ".wav" || ext == ".ogg" || ext == ".mp3")
+            if (extension == ".wav" || extension == ".ogg" || extension == ".mp3")
             {
-                edAudioPath = f;
-                // Try to determine duration
+                edAudioPath = filePath;
                 try
                 {
-                    using var fs = File.OpenRead(f);
-                    using var se = SoundEffect.FromStream(fs);
-                    edTotalTime = (float)se.Duration.TotalSeconds + 1f;
+                    using var fs = File.OpenRead(filePath);
+                    using var soundEffect = SoundEffect.FromStream(fs);
+                    edTotalTime = (float)soundEffect.Duration.TotalSeconds + 1f;
                 }
-                catch { }
+                catch
+                {
+                }
             }
-            else if (ext == ".rcm")
+            else if (extension == ".rcm")
             {
-                // Import existing beatmap
                 try
                 {
-                    var bm = RcFileManager.ReadBeatmap(f);
-                    edNotes = bm.Notes ?? new List<Note>();
-                    if (!string.IsNullOrEmpty(bm.Name)) edSongName = bm.Name;
-                    if (!string.IsNullOrEmpty(bm.Author)) edAuthor = bm.Author;
-                    if (bm.Bpm > 0) edBpm = bm.Bpm.ToString("F0");
+                    var beatmapData = RcFileManager.ReadBeatmap(filePath);
+                    edNotes = beatmapData.Notes ?? new List<Note>();
+                    if (!string.IsNullOrEmpty(beatmapData.Name))
+                    {
+                        edSongName = beatmapData.Name;
+                    }
+
+                    if (!string.IsNullOrEmpty(beatmapData.Author))
+                    {
+                        edAuthor = beatmapData.Author;
+                    }
+
+                    if (beatmapData.Bpm > 0)
+                    {
+                        edBpm = beatmapData.Bpm.ToString("F0");
+                    }
                 }
-                catch { }
+                catch
+                {
+                }
             }
         }
 
@@ -533,6 +484,7 @@ namespace ClickerGame
             beatmap = RcFileManager.ReadBeatmap(rcmPath);
             notes = new LinkedList<Note>(beatmap.Notes ?? new List<Note>());
             maxScore = (beatmap?.Notes?.Count ?? 0) * 100;
+            InitializeRhythmSession();
             songInstance?.Stop(); songInstance?.Dispose(); songEffect = null;
             try
             {
@@ -556,6 +508,7 @@ namespace ClickerGame
             beatmap = Beatmap.LoadFromString(json);
             notes = new LinkedList<Note>(beatmap.Notes ?? new List<Note>());
             maxScore = (beatmap?.Notes?.Count ?? 0) * 100;
+            InitializeRhythmSession();
             songInstance?.Stop(); songInstance?.Dispose(); songEffect = null;
             try
             {
@@ -587,6 +540,25 @@ namespace ClickerGame
                 }
             tex.SetData(data);
             return tex;
+        }
+
+        void InitializeRhythmSession()
+        {
+            if (notes.Count == 0)
+            {
+                rhythmSession = null;
+                return;
+            }
+
+            rhythmSession = new RhythmPlaySession<Note>(
+                notes,
+                note => note.Time,
+                note => note.Column,
+                MatrixTeaIntegration.ToMatrixTeaJudgementProfile(),
+                MatrixTeaIntegration.ToMatrixTeaScoringProfile(),
+                GameConfig.ApproachTime + 0.75f);
+            notes = rhythmSession.Notes;
+            maxScore = rhythmSession.MaxScore;
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -800,55 +772,95 @@ namespace ClickerGame
         {
             float time = (float)stopwatch.Elapsed.TotalSeconds;
             float offset = (settingsManager?.Settings.OffsetMs ?? 0) / 1000f;
-            float adjTime = time + offset;
+            double adjTime = time + offset;
             Keys[] keys = GetLaneKeys();
 
-            for (int c = 0; c < 4; c++)
+            if (!editorMode && rhythmSession != null)
             {
-                if (kb.IsKeyDown(keys[c]) && !prevKb.IsKeyDown(keys[c]))
+                for (int c = 0; c < 4; c++)
                 {
-                    if (editorMode)
+                    if (kb.IsKeyDown(keys[c]) && !prevKb.IsKeyDown(keys[c]))
                     {
-                        notes.AddLast(new Note { Time = time, Column = c });
-                    }
-                    else
-                    {
-                        Note? nearest = null;
-                        LinkedListNode<Note>? nearestNode = null;
-                        float best = float.MaxValue;
-                        for (var node = notes.First; node != null; node = node.Next)
+                        var hit = rhythmSession.TryHit(adjTime, c);
+                        if (hit != null)
                         {
-                            var n = node.Value;
-                            if (n.Column != c) continue;
-                            float dt = Math.Abs(n.Time - adjTime);
-                            if (dt <= 0.30f && dt < best) { best = dt; nearest = n; nearestNode = node; }
-                        }
-                        if (nearestNode != null)
-                        {
-                            notes.Remove(nearestNode);
-                            int pts; string jText; Color jColor;
-                            if (best <= GameConfig.PerfectWindow) { pts = GameConfig.PerfectScore; jText = "PERFECT"; jColor = new Color(255, 220, 50); }
-                            else if (best <= GameConfig.GreatWindow) { pts = GameConfig.GreatScore; jText = "GREAT"; jColor = new Color(80, 255, 120); }
-                            else { pts = GameConfig.GoodScore; jText = "GOOD"; jColor = new Color(0, 200, 255); }
+                            score = rhythmSession.Score;
+                            combo = rhythmSession.Combo;
+                            maxCombo = rhythmSession.MaxCombo;
+                            hitCount = rhythmSession.HitCount;
+                            missCount = rhythmSession.MissCount;
 
-                            score += pts; combo++; hitCount++;
-                            if (combo > maxCombo) maxCombo = combo;
+                            string jText = hit.Judgment.Kind switch
+                            {
+                                JudgementKind.Perfect => "PERFECT",
+                                JudgementKind.Great => "GREAT",
+                                JudgementKind.Good => "GOOD",
+                                _ => "MISS",
+                            };
+
+                            Color jColor = hit.Judgment.Kind switch
+                            {
+                                JudgementKind.Perfect => new Color(255, 220, 50),
+                                JudgementKind.Great => new Color(80, 255, 120),
+                                JudgementKind.Good => new Color(0, 200, 255),
+                                _ => Color.Red,
+                            };
+
                             float sfxVol = (settingsManager?.Settings.SfxVolume ?? 0.8f);
                             sfxHit?.Play(Math.Clamp(0.5f + combo * 0.005f, 0.5f, 0.9f) * sfxVol, Math.Clamp(combo * 0.015f, 0f, 0.8f), 0f);
                             shakeTimer = 0.06f; shakeIntensity = Math.Clamp(1f + combo * 0.05f, 1f, 4f);
                             judgmentPopups.Add(new JudgmentPopup { Text = jText, Color = jColor, Timer = 0.6f,
                                 Position = new Vector2(LaneLeft + c * LaneWidth + LaneWidth / 2, HitZoneY - 30) });
                             SpawnHitParticles(c);
-                            replayManager?.RecordEvent(adjTime, c, jText, pts, combo);
+                            replayManager?.RecordEvent((float)adjTime, c, jText, hit.Judgment.ScoreAwarded, combo);
+                        }
+
+                        int lx = LaneLeft + c * LaneWidth + 4;
+                        if (keyFlashPool != null)
+                        {
+                            var k = keyFlashPool.Rent();
+                            k.Reset(new Rectangle(lx, HitZoneY, LaneWidth - 8, HitZoneHeight),
+                                TierNoteColors[ComboTier][c], GameConfig.KeyFlashDuration);
+                            keyFlashes.Add(k);
                         }
                     }
-                    int lx = LaneLeft + c * LaneWidth + 4;
+                }
+
+                foreach (var miss in rhythmSession.CollectMisses(adjTime))
+                {
+                    int col = miss.Column;
+                    score = rhythmSession.Score;
+                    combo = rhythmSession.Combo;
+                    maxCombo = rhythmSession.MaxCombo;
+                    hitCount = rhythmSession.HitCount;
+                    missCount = rhythmSession.MissCount;
+                    float sfxVol = (settingsManager?.Settings.SfxVolume ?? 0.8f);
+                    sfxMiss?.Play(0.35f * sfxVol, 0f, 0f);
+                    replayManager?.RecordEvent((float)adjTime, col, "MISS", 0, 0);
                     if (keyFlashPool != null)
                     {
                         var k = keyFlashPool.Rent();
-                        k.Reset(new Rectangle(lx, HitZoneY, LaneWidth - 8, HitZoneHeight),
-                            TierNoteColors[ComboTier][c], GameConfig.KeyFlashDuration);
+                        k.Reset(new Rectangle(LaneLeft + col * LaneWidth + 4, HitZoneY, LaneWidth - 8, HitZoneHeight), Color.Red, GameConfig.MissFlashDuration);
                         keyFlashes.Add(k);
+                    }
+                }
+            }
+
+            if (editorMode)
+            {
+                for (int c = 0; c < 4; c++)
+                {
+                    if (kb.IsKeyDown(keys[c]) && !prevKb.IsKeyDown(keys[c]))
+                    {
+                        notes.AddLast(new Note { Time = time, Column = c });
+                        int lx = LaneLeft + c * LaneWidth + 4;
+                        if (keyFlashPool != null)
+                        {
+                            var k = keyFlashPool.Rent();
+                            k.Reset(new Rectangle(lx, HitZoneY, LaneWidth - 8, HitZoneHeight),
+                                TierNoteColors[ComboTier][c], GameConfig.KeyFlashDuration);
+                            keyFlashes.Add(k);
+                        }
                     }
                 }
             }
