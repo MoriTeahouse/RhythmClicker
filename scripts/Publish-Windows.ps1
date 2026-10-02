@@ -14,8 +14,10 @@ $taskRevision=(git -C $taskRepo rev-parse HEAD).Trim()
 if($LASTEXITCODE -ne 0){throw 'Source revision is required.'}
 $taskEngineRevision=(git -C $EngineRoot rev-parse HEAD).Trim()
 if($LASTEXITCODE -ne 0){throw 'Engine revision is required.'}
-dotnet publish (Join-Path $taskRepo 'ClickerGame/ClickerGame.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false "-p:EngineRoot=$EngineRoot" -o $OutputPath --nologo
+dotnet publish (Join-Path $taskRepo 'ClickerGame/ClickerGame.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:DebugType=None -p:DebugSymbols=false -p:CopyOutputSymbolsToPublishDirectory=false "-p:EngineRoot=$EngineRoot" -o $OutputPath --nologo
 if($LASTEXITCODE -ne 0){throw 'Game publish failed.'}
+$taskForbidden=Get-ChildItem -LiteralPath $OutputPath -Recurse -File | Where-Object { $_.Extension -in '.cs','.csproj','.pdb' } | Select-Object -First 1
+if($taskForbidden){throw 'Player package contains source files or debug symbols.'}
 Copy-Item -LiteralPath (Join-Path $OutputPath 'PLAYER.md') -Destination (Join-Path $OutputPath 'README.md')
 $taskSources=@"
 # RhythmClicker corresponding source
