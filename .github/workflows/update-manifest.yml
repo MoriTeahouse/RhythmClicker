@@ -21,7 +21,8 @@ jobs:
         run: |
           gh release download $env:RELEASE_TAG --pattern RhythmClicker.zip --dir artifacts/released
           if($LASTEXITCODE -ne 0) { throw 'Published game archive is missing.' }
-          $version = [Version]::Parse($env:RELEASE_TAG.TrimStart('v')).ToString()
+          # Promoted releases may retain their original testing tag.
+          $version = [Version]::Parse($env:RELEASE_TAG.TrimStart('v').Split('-',2)[0]).ToString()
           $hash = (Get-FileHash artifacts/released/RhythmClicker.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           @{version=$version;download_url="https://github.com/$env:RELEASE_REPO/releases/download/$env:RELEASE_TAG/RhythmClicker.zip";sha256=$hash} | ConvertTo-Json | Set-Content version.json -Encoding utf8NoBOM
           git config user.name 'github-actions[bot]'
