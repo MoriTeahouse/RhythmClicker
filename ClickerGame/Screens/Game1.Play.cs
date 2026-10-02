@@ -1,4 +1,6 @@
-﻿using System;
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
+using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -12,220 +14,68 @@ public partial class Game1
 {
         void UpdatePlaying(GameTime gameTime)
         {
-            float time = (float)stopwatch.Elapsed.TotalSeconds;
-            float offset = (settingsManager?.Settings.OffsetMs ?? 0) / 1000f;
-            float adjTime = time + offset;
-            Keys[] keys = GetLaneKeys();
-
-            // Update video background
-            videoPlayer?.UpdateTime(time);
-
-            // Break period detection
-            inBreak = false; currentBreak = null;
-            if (beatmap?.Breaks != null)
+            if (playRun == null) return;
+            double time = SongTime;
+            UpdateRoundEffects(Math.Min(0.05f, (float)gameTime.ElapsedGameTime.TotalSeconds));
+            if (!_audioStarted && time >= 0) { _audioStarted = true; songTimeline.Start(HostNow); audioPlayer.Volume = (settingsManager?.Settings.MusicVolume ?? 0.7f) * (settingsManager?.Settings.MasterVolume ?? 0.8f); audioPlayer.Play(); videoPlayer?.Play(); time = 0; }
+            videoPlayer?.UpdateTime((float)Math.Max(0, time));
+            double judgementTime = MatrixTea.Engine.Core.Rhythm.PlaybackTimeline.JudgementTime(time, settingsManager?.Settings.OffsetMs ?? 0);
+            var keys = GetLaneKeys();
+            for (int lane = 0; lane < 4; lane++) capturedLanes[lane] = kb.IsKeyDown(keys[lane]);
+            laneInput.Capture(capturedLanes, HostNow);
+            // Judge timestamped presses before overdue notes, then resolve every miss before results.
+            while (laneInput.TryReadPress(out var press))
             {
-                foreach (var bp in beatmap.Breaks)
-                {
-                    if (time >= bp.StartTime && time <= bp.EndTime)
-                    { inBreak = true; currentBreak = bp; break; }
-                }
+                if (time < 0) continue;
+                double at = judgementTime - (HostNow - press.TimestampSeconds);
+                var result = playRun.HitAt(at, press.Action);
+                if (result != null) ApplyJudgement(result, time);
+                else if (keyFlashPool != null) { var flash = keyFlashPool.Rent(); flash.Reset(new(LaneLeft + press.Action * LaneWidth, HitZoneY - 20, LaneWidth, 70), LanePalette[press.Action], 0.1f); keyFlashes.Add(flash); }
             }
-
-            for (int c = 0; c < 4; c++)
+            if (IsSmoke) DriveSmokeHits(time);
+            foreach (var miss in playRun.MissesAt(judgementTime)) ApplyJudgement(miss, time);
+            bool failed = hp <= 0 && settingsManager?.Settings.PracticeMode != true;
+            if (!summaryShown && (failed || playRun.Complete || time >= songDurationSeconds + 0.25))
             {
-                if (kb.IsKeyDown(keys[c]) && !prevKb.IsKeyDown(keys[c]))
-                {
-                    if (editorMode)
-                    {
-                        notes.AddLast(new Note { Time = time, Column = c });
-                    }
-                    else
-                    {
-                        Note? nearest = null;
-                        LinkedListNode<Note>? nearestNode = null;
-                        float best = float.MaxValue;
-                        for (var node = notes.First; node != null; node = node.Next)
-                        {
-                            var n = node.Value;
-                            if (n.Column != c) continue;
-                            float dt = Math.Abs(n.Time - adjTime);
-                            if (dt <= GameConfig.GoodWindow && dt < best) { best = dt; nearest = n; nearestNode = node; }
-                        }
-                        if (nearestNode != null)
-                        {
-                            notes.Remove(nearestNode);
-                            int pts; string jText; Color jColor;
-                            if (best <= GameConfig.PerfectWindow)
-                            {
-                                pts = GameConfig.PerfectScore; jText = "PERFECT"; jColor = new Color(255, 220, 50);
-                                hp = Math.Min(GameConfig.MaxHP, hp + GameConfig.HPGainPerfect); perfectCount++;
-                            }
-                            else if (best <= GameConfig.GreatWindow)
-                            {
-                                pts = GameConfig.GreatScore; jText = "GREAT"; jColor = new Color(80, 255, 120);
-                                hp = Math.Min(GameConfig.MaxHP, hp + GameConfig.HPGainGreat); greatCount++;
-                            }
-                            else
-                            {
-                                pts = GameConfig.GoodScore; jText = "GOOD"; jColor = new Color(0, 200, 255);
-                                hp = Math.Min(GameConfig.MaxHP, hp + GameConfig.HPGainGood); goodCount++;
-                            }
-
-                            score += pts; combo++; hitCount++;
-                            if (combo > maxCombo) maxCombo = combo;
-                            float sfxVol = (settingsManager?.Settings.SfxVolume ?? 0.8f);
-                            sfxHit?.Play(Math.Clamp(0.5f + combo * 0.005f, 0.5f, 0.9f) * sfxVol, Math.Clamp(combo * 0.015f, 0f, 0.8f), 0f);
-                            shakeTimer = 0.06f; shakeIntensity = Math.Clamp(1f + combo * 0.05f, 1f, 4f);
-                            judgmentPopups.Add(new JudgmentPopup { Text = jText, Color = jColor, Timer = 0.6f,
-                                Position = new Vector2(LaneLeft + c * LaneWidth + LaneWidth / 2, HitZoneY - 30) });
-                            SpawnHitParticles(c);
-                            replayManager?.RecordEvent(adjTime, c, jText, pts, combo);
-                        }
-                    }
-                    int lx = LaneLeft + c * LaneWidth + 4;
-                    if (keyFlashPool != null)
-                    {
-                        var k = keyFlashPool.Rent();
-                        k.Reset(new Rectangle(lx, HitZoneY, LaneWidth - 8, HitZoneHeight),
-                            TierNoteColors[ComboTier][c], GameConfig.KeyFlashDuration);
-                        keyFlashes.Add(k);
-                    }
-                }
-            }
-
-            // Save in editor mode
-            if (editorMode && kb.IsKeyDown(Keys.S) && !prevKb.IsKeyDown(Keys.S))
-            {
-                string songId = songs.Count > 0 ? songs[currentSongIndex].Id : "song";
-                RcFileManager.WriteBeatmap(Path.Combine("Assets", songId + "_" + currentDifficulty + ".rcm"),
-                    new Beatmap { Notes = new List<Note>(notes) });
-            }
-
-            // End detection (HP depleted or song finished)
-            bool hpFail = hp <= 0 && !hpDepleted;
-            if (hpFail) hpDepleted = true;
-
-            if (!summaryShown && (hpDepleted || notes.Count == 0 || stopwatch.Elapsed.TotalSeconds >= songDurationSeconds + 0.1))
-            {
-                summaryShown = true; state = GameState.Result; songInstance?.Stop();
-                videoPlayer?.Stop();
-                var pct = maxScore > 0 ? (double)score / maxScore : 0.0;
-                resultGrade = hpDepleted ? "F" : pct >= 0.95 ? "SS" : pct >= 0.85 ? "S" : pct >= 0.75 ? "A"
-                            : pct >= 0.60 ? "B" : pct >= 0.40 ? "C" : "D";
-                resultMenuIndex = 0;
-                discordRpc?.SetResult(resultGrade, score);
-
-                // Record stats
-                int total = hitCount + missCount;
-                double acc = total > 0 ? (double)hitCount / total * 100 : 0;
-                string songId = songs.Count > 0 ? songs[currentSongIndex].Id : "unknown";
-                statsDb?.RecordPlay(accountsManager?.LoggedInUser ?? "guest",
-                    songId, currentDifficulty, score, maxCombo, hitCount, missCount, acc, resultGrade);
-
-                // Save replay
-                replayManager?.StopRecording(songId, currentDifficulty,
-                    accountsManager?.LoggedInUser ?? "guest",
-                    score, maxCombo, hitCount, missCount, acc, resultGrade);
-
-                // Check achievements
-                bool isFC = missCount == 0 && hitCount > 0;
-                var summary = statsDb?.GetSummary(accountsManager?.LoggedInUser);
-                int totalPlays = summary?.TotalPlays ?? 1;
-                int uniqueSongs = GetUniqueSongsPlayed();
-                achievementManager?.CheckAfterPlay(totalPlays, maxCombo, resultGrade, acc, isFC, uniqueSongs, songs.Count);
-
-                // Cloud sync: upload play + achievements
-                if (cloudSync != null && accountsManager?.LoggedInUser != null)
-                {
-                    var syncUser = accountsManager.LoggedInUser;
-                    var playedAt = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await cloudSync.UploadPlayAsync(syncUser, songId, currentDifficulty,
-                                score, maxCombo, hitCount, missCount, acc, resultGrade, playedAt);
-                            if (achievementManager != null)
-                                await cloudSync.UploadAchievementsAsync(syncUser, achievementManager.GetAll());
-                        }
-                        catch { }
-                    });
-                }
-
-                // Show achievement popups
-                if (achievementManager != null && achievementManager.PendingPopups.Count > 0)
-                {
-                    var ach = achievementManager.PendingPopups.Dequeue();
-                    achievementPopupText = Localization.Get(ach.NameKey);
-                    achievementPopupTimer = 4f;
-                }
-            }
-
-            // Shake, pulse, particles, judgments, miss detection
-            if (shakeTimer > 0) shakeTimer -= (float)gameTime.ElapsedGameTime.TotalSeconds;
-            { float bi = 0.5f; float ct = (float)stopwatch.Elapsed.TotalSeconds; float bp = (ct % bi) / bi;
-              float tgt = bp < 0.1f ? (1f - bp / 0.1f) : 0f; tgt *= Math.Clamp(combo / 10f, 0.15f, 1f);
-              beatPulseAlpha = MathHelper.Lerp(beatPulseAlpha, tgt, 0.3f); }
-
-            float dt2 = (float)gameTime.ElapsedGameTime.TotalSeconds;
-            for (int i = particles.Count - 1; i >= 0; i--)
-            { var p = particles[i]; p.Pos += p.Vel * dt2; p.Vel.Y += 500f * dt2; p.Life -= dt2; if (p.Life <= 0) particles.RemoveAt(i); }
-            for (int i = judgmentPopups.Count - 1; i >= 0; i--)
-            { var j = judgmentPopups[i]; j.Timer -= dt2; j.Position = new Vector2(j.Position.X, j.Position.Y - 45f * dt2); if (j.Timer <= 0) judgmentPopups.RemoveAt(i); }
-
-            // Fast miss detection - notes are missed shortly after passing the hit zone
-            float pTime = (float)stopwatch.Elapsed.TotalSeconds + offset;
-            for (var mN = notes.First; mN != null;)
-            {
-                var nxt = mN.Next;
-                if (pTime - mN.Value.Time > GameConfig.MissWindow)
-                {
-                    int col = mN.Value.Column; notes.Remove(mN); combo = 0; missCount++;
-                    hp = Math.Max(0, hp - GameConfig.HPDrainMiss);
-                    float sfxVol = (settingsManager?.Settings.SfxVolume ?? 0.8f);
-                    sfxMiss?.Play(0.35f * sfxVol, 0f, 0f);
-                    replayManager?.RecordEvent(pTime, col, "MISS", 0, 0);
-                    judgmentPopups.Add(new JudgmentPopup { Text = "MISS", Color = new Color(255, 80, 80), Timer = 0.5f,
-                        Position = new Vector2(LaneLeft + col * LaneWidth + LaneWidth / 2, HitZoneY - 30) });
-                    if (keyFlashPool != null)
-                    { var k = keyFlashPool.Rent(); k.Reset(new Rectangle(LaneLeft + col * LaneWidth + 4, HitZoneY, LaneWidth - 8, HitZoneHeight), Color.Red, GameConfig.MissFlashDuration); keyFlashes.Add(k); }
-                }
-                mN = nxt;
+                hpDepleted = failed;
+                foreach (var miss in playRun.Finish()) ApplyJudgement(miss, time);
+                FinishRound();
             }
         }
 
+        void FinishRound()
+        {
+            summaryShown = true; state = GameState.Result; audioPlayer.Stop(); songInstance?.Stop(); stopwatch.Stop(); videoPlayer?.Stop();
+            double acc = playRun?.Accuracy ?? 0;
+            resultGrade = hpDepleted ? "F" : acc >= 95 ? "SS" : acc >= 85 ? "S" : acc >= 75 ? "A" : acc >= 60 ? "B" : acc >= 40 ? "C" : "D";
+            resultMenuIndex = 0; discordRpc?.SetResult(resultGrade, score);
+            string songId = songs.Count > 0 ? songs[currentSongIndex].Id : "unknown";
+            string player = accountsManager?.LoggedInUser ?? "guest";
+            replayManager?.StopRecording(songId, currentDifficulty, player, score, maxCombo, hitCount, missCount, acc, resultGrade);
+            if (settingsManager?.Settings.PracticeMode == true || IsSmoke) return;
+            statsDb?.RecordPlay(player, songId, currentDifficulty, score, maxCombo, hitCount, missCount, acc, resultGrade);
+            achievementManager?.CheckAfterPlay(statsDb?.GetSummary(player)?.TotalPlays ?? 1, maxCombo, resultGrade, acc, missCount == 0 && hitCount > 0, GetUniqueSongsPlayed(), songs.Count);
+            if (cloudSync != null && accountsManager?.LoggedInUser != null)
+            {
+                // Freeze values before the next run mutates fields used by this background task.
+                int finalScore = score, finalCombo = maxCombo, finalHit = hitCount, finalMiss = missCount;
+                string difficulty = currentDifficulty, grade = resultGrade, date = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+                _ = Task.Run(async () => { try { await cloudSync.UploadPlayAsync(player, songId, difficulty, finalScore, finalCombo, finalHit, finalMiss, acc, grade, date); } catch { } });
+            }
+        }
 
         void StartPlaying(bool editor)
         {
-            editorMode = editor;
-            state = GameState.Playing;
-            score = 0; combo = 0; maxCombo = 0; hitCount = 0; missCount = 0;
-            perfectCount = 0; greatCount = 0; goodCount = 0;
-            hp = GameConfig.InitialHP; hpDepleted = false;
-            inBreak = false; currentBreak = null;
-            summaryShown = false; keyFlashes.Clear(); particles.Clear(); judgmentPopups.Clear();
-            shakeTimer = 0; beatPulseAlpha = 0;
-            LoadCurrentSong();
-
-            // Load video/background for current beatmap
-            LoadBeatmapMedia();
-
-            EnterBorderlessFullscreen();
-            menuMusicInstance?.Stop();
-            replayManager?.StartRecording();
-            stopwatch.Restart(); songInstance?.Stop();
-            if (songInstance != null)
-            {
-                songInstance.Volume = settingsManager?.Settings.MusicVolume ?? 0.7f;
-                songInstance.Play();
-            }
-
-            // Start video playback
-            if (videoPlayer != null && videoPlayer.HasVideo)
-                videoPlayer.Play();
-
-            string title = songs.Count > 0 ? songs[currentSongIndex].Title : "Unknown";
-            discordRpc?.SetPlaying(title, DiffShort(currentDifficulty));
+            try { LoadCurrentSong(); }
+            catch (Exception ex) { syncStatusText = "譜面載入失敗：" + ex.Message; syncStatusTimer = 6; return; }
+            state = GameState.Playing; isReplayRun = false;
+            score = combo = maxCombo = hitCount = missCount = perfectCount = greatCount = goodCount = 0;
+            hp = GameConfig.InitialHP; hpDepleted = false; summaryShown = false;
+            foreach (var flash in keyFlashes) keyFlashPool?.Return(flash);
+            keyFlashes.Clear(); particles.Clear(); judgmentPopups.Clear();
+            LoadBeatmapMedia(); menuMusicInstance?.Stop(); replayManager?.StartRecording(beatmap!);
+            stopwatch.Restart(); BeginRound();
+            discordRpc?.SetPlaying(songs.Count > 0 ? songs[currentSongIndex].Title : "Practice", DiffShort(currentDifficulty));
         }
 
         void LoadBeatmapMedia()
@@ -292,115 +142,7 @@ public partial class Game1
 
         // ═══════════ Gameplay ═══════════
 
-        void DrawGameplay(GameTime gameTime)
-        {
-            float time = (float)stopwatch.Elapsed.TotalSeconds;
-            int ll = LaneLeft, hz = HitZoneY;
-
-            // Video / background image behind lanes
-            var videoFrame = videoPlayer?.CurrentFrame;
-            if (videoFrame != null)
-            {
-                // Draw video frame scaled to fill screen, semi-transparent
-                spriteBatch!.Draw(videoFrame, new Rectangle(0, 0, width, height), Color.White * 0.35f);
-            }
-            else if (bgImageTexture != null)
-            {
-                spriteBatch!.Draw(bgImageTexture, new Rectangle(0, 0, width, height), Color.White * 0.25f);
-            }
-
-            for (int i = 0; i < LaneCount; i++)
-                spriteBatch!.Draw(pixel!, new Rectangle(ll + i * LaneWidth, 0, LaneWidth, height), Color.White * (i % 2 == 0 ? 0.02f : 0.04f));
-            for (int i = 0; i <= LaneCount; i++)
-                spriteBatch!.Draw(pixel!, new Rectangle(ll + i * LaneWidth, 0, 1, height), Color.White * 0.08f);
-
-            // Hit zone
-            Color glow = TierGlowColor[ComboTier];
-            spriteBatch!.Draw(pixel!, new Rectangle(ll, hz, TotalLaneWidth, 2), glow * 0.8f);
-            spriteBatch.Draw(pixel!, new Rectangle(ll, hz, TotalLaneWidth, HitZoneHeight), Color.White * 0.02f);
-
-            for (int i = 0; i < LaneCount; i++)
-            {
-                var lkLabels = GetLaneKeyLabels();
-                var label = textRenderer!.GetTexture(lkLabels[i], "Segoe UI", 18, new Color(180, 180, 200));
-                spriteBatch.Draw(label, new Vector2(ll + i * LaneWidth + (LaneWidth - label.Width) / 2, hz + HitZoneHeight + 6), Color.White);
-            }
-
-            // Notes
-            for (var n = notes.Last; n != null; n = n.Previous)
-            {
-                float dt = n.Value.Time - time;
-                if (time - n.Value.Time > GameConfig.MissWindow) continue;
-                float prog = (GameConfig.ApproachTime - dt) / (GameConfig.ApproachTime + 0.01f);
-                int nx = ll + n.Value.Column * LaneWidth + 6;
-                int ny = (int)(MathHelper.Clamp(prog, 0f, 1f) * (hz - NoteHeight));
-                var nr = new Rectangle(nx, ny, LaneWidth - 12, NoteHeight);
-                Color nc = editorMode ? Color.Yellow : TierNoteColors[ComboTier][n.Value.Column % 4];
-                spriteBatch.Draw(pixel!, new Rectangle(nr.X - 1, nr.Y - 1, nr.Width + 2, nr.Height + 2), nc * 0.2f);
-                spriteBatch.Draw(pixel!, nr, nc * 0.9f);
-                spriteBatch.Draw(pixel!, new Rectangle(nr.X, nr.Y, nr.Width, 2), Color.White * 0.35f);
-            }
-
-            // Flashes, particles, judgments
-            for (int i = keyFlashes.Count - 1; i >= 0; i--)
-            {
-                var k = keyFlashes[i];
-                spriteBatch!.Draw(pixel!, k.Rect, k.Color * (Math.Clamp(k.TimeToLive / GameConfig.KeyFlashDuration, 0, 1) * 0.3f));
-                k.TimeToLive -= (float)gameTime.ElapsedGameTime.TotalSeconds;
-                if (k.TimeToLive <= 0) { keyFlashes.RemoveAt(i); keyFlashPool?.Return(k); }
-            }
-            foreach (var p in particles)
-            {
-                float pa = p.Life / p.MaxLife; float ps = p.Size * (0.5f + pa * 0.5f);
-                spriteBatch!.Draw(pixel!, new Rectangle((int)(p.Pos.X - ps / 2), (int)(p.Pos.Y - ps / 2), (int)ps + 1, (int)ps + 1), p.Color * pa);
-            }
-            foreach (var j in judgmentPopups)
-            {
-                float ja = Math.Clamp(j.Timer / 0.3f, 0, 1);
-                var jt = textRenderer!.GetTexture(j.Text, "Segoe UI", 22, j.Color);
-                spriteBatch!.Draw(jt, new Vector2(j.Position.X - jt.Width / 2, j.Position.Y), Color.White * ja);
-            }
-
-            // HUD - top
-            string st = songs.Count > 0 ? songs[currentSongIndex].Title : Localization.Get("unknown");
-            var tt = textRenderer!.GetTexture(st, "Segoe UI", 18, Color.White);
-            spriteBatch.Draw(tt, new Vector2(16, 14), Color.White);
-            var dft = textRenderer!.GetTexture(DiffShort(currentDifficulty), "Segoe UI", 14, glow);
-            spriteBatch.Draw(dft, new Vector2(16, 38), Color.White);
-
-            var sct = textRenderer!.GetTexture($"{Localization.Get("score")}: {score}", "Segoe UI", 18, Color.White);
-            spriteBatch.Draw(sct, new Vector2(width - sct.Width - 16, 14), Color.White);
-
-            if (combo > 1)
-            {
-                int cs = Math.Min(36 + ComboTier * 4, 52);
-                var ct = textRenderer!.GetTexture($"{combo}x", "Segoe UI", cs, TierGlowColor[ComboTier]);
-                spriteBatch.Draw(ct, new Vector2((width - ct.Width) / 2, hz - 56 - ComboTier * 4), Color.White);
-            }
-
-            if (songDurationSeconds > 0)
-            {
-                float pr = Math.Clamp((float)(stopwatch.Elapsed.TotalSeconds / songDurationSeconds), 0, 1);
-                spriteBatch.Draw(pixel!, new Rectangle(0, 0, width, 3), Color.White * 0.06f);
-                spriteBatch.Draw(pixel!, new Rectangle(0, 0, (int)(width * pr), 3), glow);
-            }
-
-            // ═══ HP bar (right side) ═══
-            DrawHPBar();
-
-            // ═══ Judgment counter (left side) ═══
-            DrawJudgmentCounter();
-
-            // ═══ Break overlay ═══
-            if (inBreak && currentBreak != null)
-                DrawBreakOverlay();
-
-            if (editorMode)
-            {
-                var et = textRenderer!.GetTexture(Localization.Get("editor_hint"), "Segoe UI", 14, Color.Yellow);
-                spriteBatch.Draw(et, new Vector2((width - et.Width) / 2, height - 22), Color.White);
-            }
-        }
+        void DrawGameplay(GameTime gameTime) => DrawModernGameplay(gameTime);
 
         void DrawBreakOverlay()
         {

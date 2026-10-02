@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
 using System.Collections.Generic;
 
 namespace ClickerGame
@@ -13,7 +15,7 @@ namespace ClickerGame
 
     public static class Localization
     {
-        static GameLanguage _current = GameLanguage.English;
+        static GameLanguage _current = GameLanguage.ZhTW;
 
         public static GameLanguage Current
         {

@@ -1,15 +1,8 @@
-using System;
-using Microsoft.Xna.Framework;
-
-namespace ClickerGame
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
+namespace RhythmClickerCompatibility;
+public static class Program
 {
-    public static class Program
-    {
-        [STAThread]
-        static void Main()
-        {
-            using var game = new Game1();
-            game.Run();
-        }
-    }
+    [System.STAThread]
+    public static int Main(string[] args) => ClickerGame.Program.Main(args);
 }

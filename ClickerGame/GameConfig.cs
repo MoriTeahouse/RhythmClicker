@@ -1,20 +1,22 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
 namespace ClickerGame
 {
     public static class GameConfig
     {
-        public const int DefaultWidth = 800;
-        public const int DefaultHeight = 600;
+        public const int DefaultWidth = 1280;
+        public const int DefaultHeight = 720;
         public const float KeyFlashDuration = 0.25f;
         public const float MissFlashDuration = 0.35f;
         public const float ApproachTime = 1.5f;
 
         // Hit judgment windows (seconds)
         public const float PerfectWindow = 0.05f;
-        public const float GreatWindow = 0.12f;
-        public const float GoodWindow = 0.30f;
+        public const float GreatWindow = 0.10f;
+        public const float GoodWindow = 0.18f;
 
         // Miss window: how long after note's intended time before auto-MISS
-        public const float MissWindow = 0.35f;
+        public const float MissWindow = 0.18f;
 
         // Scores per judgment
         public const int PerfectScore = 100;

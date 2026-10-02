@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
 using System;
 using System.IO;
 using System.Security.Cryptography;
@@ -66,23 +68,30 @@ namespace ClickerGame
             using (var enc = aes.CreateEncryptor())
                 cipher = enc.TransformFinalBlock(plain, 0, plain.Length);
 
-            using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
-            using var bw = new BinaryWriter(fs);
-            bw.Write(magic);                     // 4 bytes magic
-            bw.Write((ushort)1);                 // 2 bytes version
-            bw.Write(aes.IV);                    // 16 bytes IV
-            bw.Write(cipher);                    // encrypted payload
+            if(File.Exists(path))
+            {
+                try { _ = ReadEncrypted<T>(path); }
+                catch(Exception error) when(error is InvalidDataException or CryptographicException or JsonException)
+                { File.Move(path,path+".corrupt-"+DateTime.UtcNow.ToString("yyyyMMddHHmmssfff")+"-"+Guid.NewGuid().ToString("N")); }
+            }
+            MatrixTea.Engine.Core.IO.AtomicFile.Write(path, stream =>
+            {
+                using var bw = new BinaryWriter(stream, Encoding.UTF8, true);
+                bw.Write(magic); bw.Write((ushort)1); bw.Write(aes.IV); bw.Write(cipher);
+            });
         }
 
         // ── Read ───────────────────────────────────────────────
 
         public static T ReadEncrypted<T>(string path)
         {
+            if(new FileInfo(path).Length>64*1024*1024)throw new InvalidDataException("RC file exceeds size limit.");
             byte[] raw = File.ReadAllBytes(path);
             if (raw.Length < 22) // 4+2+16 minimum header
                 throw new InvalidDataException($"File too small: {path}");
 
-            string ext = Path.GetExtension(path);
+            string originalPath = path.EndsWith(".bak", StringComparison.OrdinalIgnoreCase) ? path[..^4] : path;
+            string ext = Path.GetExtension(originalPath);
             byte[] expectedMagic = MagicFor(ext);
             for (int i = 0; i < 4; i++)
             {
@@ -92,7 +101,7 @@ namespace ClickerGame
 
             ushort version = BitConverter.ToUInt16(raw, 4);
             if (version != 1)
-                throw new InvalidDataException($"Unsupported version {version} in {path}");
+                throw new UnsupportedRcVersionException(version);
 
             byte[] iv = new byte[16];
             Array.Copy(raw, 6, iv, 0, 16);
@@ -133,5 +142,9 @@ namespace ClickerGame
             WriteBeatmap(rcmPath, bm);
             return true;
         }
+    }
+    public sealed class UnsupportedRcVersionException : IOException
+    {
+        public UnsupportedRcVersionException(int version):base($"Unsupported RC format version {version}.") { }
     }
 }

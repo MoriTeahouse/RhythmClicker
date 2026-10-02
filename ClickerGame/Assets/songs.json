@@ -1,8 +1,32 @@
 [
-  { "Id": "song1", "Title": "Example A", "File": "song1.wav", "Difficulties": ["easy", "hard", "difficulty", "very_difficulty"] },
-  { "Id": "song2", "Title": "Example B", "File": "song2.wav", "Difficulties": ["easy", "hard", "difficulty"] },
-  { "Id": "song3", "Title": "Example C", "File": "song3.wav", "Difficulties": ["easy", "hard", "difficulty", "very_difficulty"] },
-  { "Id": "ba_unwelcome", "Title": "Unwelcome School", "File": "ba_unwelcome.wav", "Difficulties": ["easy", "hard", "difficulty", "very_difficulty"] },
-  { "Id": "ba_constant", "Title": "Constant Moderato", "File": "ba_constant.wav", "Difficulties": ["easy", "hard", "difficulty", "very_difficulty"] },
-  { "Id": "ba_midsummer", "Title": "Midsummer Daydream", "File": "ba_midsummer.wav", "Difficulties": ["easy", "hard", "difficulty", "very_difficulty"] }
+  {
+    "Id": "tea_prelude",
+    "Title": "茶霧序曲 · Tea Prelude",
+    "File": "tea_prelude.wav",
+    "Difficulties": [
+      "easy",
+      "hard",
+      "difficulty"
+    ]
+  },
+  {
+    "Id": "stream_walk",
+    "Title": "溪光步行 · Stream Walk",
+    "File": "stream_walk.wav",
+    "Difficulties": [
+      "easy",
+      "hard",
+      "difficulty"
+    ]
+  },
+  {
+    "Id": "lantern_echo",
+    "Title": "夜燈回聲 · Lantern Echo",
+    "File": "lantern_echo.wav",
+    "Difficulties": [
+      "easy",
+      "hard",
+      "difficulty"
+    ]
+  }
 ]

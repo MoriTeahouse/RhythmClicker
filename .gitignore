@@ -54,3 +54,9 @@ Replays/
 achievements.rc
 settings.rc
 *.pdb
+
+**/bin/
+**/obj/
+artifacts/
+UserData/
+*.atr

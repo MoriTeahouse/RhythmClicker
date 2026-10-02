@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
 using System;
 using System.IO;
 
@@ -5,13 +7,13 @@ namespace ClickerGame.Core
 {
     /// <summary>
     /// Centralises all file-system paths used by the game.
-    /// The install root defaults to %LOCALAPPDATA%\RhythmClicker but can be
+    /// The data root defaults to UserData next to the game and can be
     /// overridden by the launcher writing "install_path.txt" next to the exe.
     /// </summary>
     public static class AppPaths
     {
         public const string AppName = "RhythmClicker";
-        public const string CurrentVersion = "0.4.0";
+        public const string CurrentVersion = "0.6.0";
 
         private static string? _installRoot;
 
@@ -26,20 +28,18 @@ namespace ClickerGame.Core
                 if (File.Exists(marker))
                 {
                     string candidate = File.ReadAllText(marker).Trim();
-                    if (Directory.Exists(candidate))
+                    if (Path.IsPathFullyQualified(candidate))
                     {
                         _installRoot = candidate;
                         return _installRoot;
                     }
                 }
 
-                // Fallback: %LOCALAPPDATA%\RhythmClicker
-                _installRoot = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    AppName);
+                // Portable installs keep persistent data on their chosen drive.
+                _installRoot = Path.Combine(AppContext.BaseDirectory, "UserData");
                 return _installRoot;
             }
-            set => _installRoot = value;
+            set => _installRoot = Path.GetFullPath(value);
         }
 
         // ── Sub-directories ────────────────────────────────────────────

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
 using System;
 using System.IO;
 using System.Threading;
@@ -15,7 +17,8 @@ namespace ClickerGame
         readonly GraphicsDevice _graphics;
         FFMediaToolkit.Decoding.MediaFile? _mediaFile;
         Texture2D? _currentFrame;
-        Texture2D? _nextFrame;
+        Color[]? _pendingPixels;
+        int _pendingWidth, _pendingHeight;
         readonly object _frameLock = new();
         Thread? _decoderThread;
         volatile bool _running;
@@ -25,6 +28,7 @@ namespace ClickerGame
         int _videoWidth, _videoHeight;
 
         public bool IsPlaying { get; private set; }
+        public string? Error { get; private set; }
         public bool HasVideo => _mediaFile != null;
         public Texture2D? CurrentFrame
         {
@@ -41,6 +45,7 @@ namespace ClickerGame
         {
             try
             {
+                if(!string.IsNullOrEmpty(FFMediaToolkit.FFmpegLoader.FFmpegVersion)) { _ffmpegAvailable=true; return; }
                 string? ffmpegDir = null;
 
                 // 1. Check NATIVE_DLL_SEARCH_DIRECTORIES (works for single-file publish)
@@ -86,19 +91,22 @@ namespace ClickerGame
 
                 if (ffmpegDir != null)
                 {
+                    FFmpeg.AutoGen.DynamicallyLoadedBindings.FunctionResolver = new Systems.UnicodeFFmpegResolver();
                     FFMediaToolkit.FFmpegLoader.FFmpegPath = ffmpegDir;
                     _ffmpegAvailable = true;
                 }
             }
-            catch
+            catch (Exception error)
             {
+                Error = error.ToString();
                 _ffmpegAvailable = false;
             }
         }
 
         public bool Open(string videoPath)
         {
-            if (!_ffmpegAvailable || !File.Exists(videoPath)) return false;
+            Error = null;
+            if (!_ffmpegAvailable || !File.Exists(videoPath)) { Error = "FFmpeg runtime or video file is unavailable."; return false; }
 
             try
             {
@@ -116,8 +124,10 @@ namespace ClickerGame
                 _videoDuration = info.Duration.TotalSeconds;
                 return true;
             }
-            catch
+            catch (Exception error)
             {
+                Error = error.ToString();
+                _mediaFile?.Dispose();
                 _mediaFile = null;
                 return false;
             }
@@ -126,6 +136,7 @@ namespace ClickerGame
         public void Play()
         {
             if (_mediaFile == null) return;
+            if (_decoderThread?.IsAlive == true) return;
             IsPlaying = true;
             _running = true;
             _decoderThread = new Thread(DecoderLoop) { IsBackground = true, Name = "VideoDecoder" };
@@ -135,18 +146,13 @@ namespace ClickerGame
         public void UpdateTime(float seconds)
         {
             _targetTime = seconds;
-
-            // Swap in the decoded frame if available
-            lock (_frameLock)
-            {
-                if (_nextFrame != null)
-                {
-                    var old = _currentFrame;
-                    _currentFrame = _nextFrame;
-                    _nextFrame = null;
-                    // We don't dispose old immediately because it might still be drawn
-                }
-            }
+            Color[]? pixels; int width, height;
+            lock (_frameLock) { pixels = _pendingPixels; width = _pendingWidth; height = _pendingHeight; _pendingPixels = null; }
+            if (pixels == null) return;
+            // GPU creation, upload and disposal all occur on the game thread before Draw.
+            if (_currentFrame == null || _currentFrame.Width != width || _currentFrame.Height != height)
+            { _currentFrame?.Dispose(); _currentFrame = new Texture2D(_graphics, width, height); }
+            _currentFrame.SetData(pixels);
         }
 
         void DecoderLoop()
@@ -204,20 +210,14 @@ namespace ClickerGame
                             }
                         }
 
-                        // Create texture on decoder thread, set data
-                        var tex = new Texture2D(_graphics, targetW, targetH);
-                        tex.SetData(pixels);
-
                         lock (_frameLock)
-                        {
-                            _nextFrame?.Dispose();
-                            _nextFrame = tex;
-                        }
+                        { if (_running) { _pendingPixels = pixels; _pendingWidth = targetW; _pendingHeight = targetH; } }
                         lastDecodedTime = target;
                     }
                 }
-                catch
+                catch (Exception error)
                 {
+                    Error = error.ToString();
                     // Frame decode error, skip
                 }
                 Thread.Sleep(16); // ~60fps max decode rate
@@ -228,21 +228,21 @@ namespace ClickerGame
         {
             IsPlaying = false;
             _running = false;
-            _decoderThread?.Join(500);
-            _decoderThread = null;
+            if (_decoderThread?.Join(2000) != false) _decoderThread = null;
         }
 
         public void Dispose()
         {
             Stop();
-            _mediaFile?.Dispose();
-            _mediaFile = null;
+            var media = _mediaFile; _mediaFile = null;
+            var thread = _decoderThread;
+            if (thread?.IsAlive == true) _ = System.Threading.Tasks.Task.Run(() => { thread.Join(); media?.Dispose(); });
+            else media?.Dispose();
             lock (_frameLock)
             {
                 _currentFrame?.Dispose();
                 _currentFrame = null;
-                _nextFrame?.Dispose();
-                _nextFrame = null;
+                _pendingPixels = null;
             }
         }
     }
