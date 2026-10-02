@@ -30,7 +30,7 @@ public partial class Game1
         if(smokeStage==1&&state==GameState.Result)smokeStage=2;
         if(smokeStage==3&&smokeFrame>resultCaptureFrame+12)
         {
-            if(hitCount!=4||missCount!=0||score!=400||playRun?.Indexed!=true)throw new Exception("Smoke result mismatch.");
+            if(hitCount!=4||missCount!=0||score!=400||playRun?.Indexed!=true)throw new Exception($"Smoke result mismatch: score={score} hit={hitCount} miss={missCount}.");
             var replay=replayManager!.GetBestReplay("smoke_probe","easy")??throw new Exception("Missing replay");
             StartReplayView(replay);if(state!=GameState.ReplayView)throw new Exception("Replay load failed: "+syncStatusText);smokeStage=4;
         }
@@ -58,7 +58,7 @@ public partial class Game1
     {
         if(playRun==null)return;
         foreach(var note in playRun.RemainingNotes.ToArray())
-            if(time>=note.Time&&time-note.Time<0.1){var result=playRun.HitAt(note.Time,note.Column);if(result!=null)ApplyJudgement(result,time);}
+            if(time>=note.Time){var result=playRun.HitAt(note.Time,note.Column);if(result!=null)ApplyJudgement(result,time);}
     }
     private void CaptureSmoke()
     {

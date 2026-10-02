@@ -32,8 +32,8 @@ public partial class Game1
                 if (result != null) ApplyJudgement(result, time);
                 else if (keyFlashPool != null) { var flash = keyFlashPool.Rent(); flash.Reset(new(LaneLeft + press.Action * LaneWidth, HitZoneY - 20, LaneWidth, 70), LanePalette[press.Action], 0.1f); keyFlashes.Add(flash); }
             }
-            foreach (var miss in playRun.MissesAt(judgementTime)) ApplyJudgement(miss, time);
             if (IsSmoke) DriveSmokeHits(time);
+            foreach (var miss in playRun.MissesAt(judgementTime)) ApplyJudgement(miss, time);
             bool failed = hp <= 0 && settingsManager?.Settings.PracticeMode != true;
             if (!summaryShown && (failed || playRun.Complete || time >= songDurationSeconds + 0.25))
             {
