@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -25,7 +27,7 @@ namespace ClickerGame
     public class AchievementManager
     {
         private readonly string _path;
-        private AchievementData _data;
+        private AchievementData _data = new();
 
         // Popup queue for newly unlocked
         public Queue<Achievement> PendingPopups { get; } = new();

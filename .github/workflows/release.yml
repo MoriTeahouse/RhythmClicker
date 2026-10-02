@@ -1,135 +1,31 @@
-name: Build & Release
-
-# Trigger: push any tag starting with 'v' (e.g. v0.3, v1.0.0)
+name: Draft Windows release
 on:
   push:
-    tags:
-      - 'v*'
-
+    tags: ['v*']
+permissions:
+  contents: write
 jobs:
   release:
     runs-on: windows-latest
-    permissions:
-      contents: write   # needed to create a release and push version.json
-
     steps:
-      # ── Checkout ──────────────────────────────────────────────────────────────
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
-          # Full history + permission to push version.json back to main
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      # ── .NET ──────────────────────────────────────────────────────────────────
-      - name: Setup .NET 8
-        uses: actions/setup-dotnet@v4
+          submodules: recursive
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0.x'
-
-      # ── Restore ───────────────────────────────────────────────────────────────
-      - name: Restore NuGet packages
-        run: dotnet restore ClickerGame.sln
-
-      # ── Publish game (self-contained, single-file) ────────────────────────────
-      - name: Publish ClickerGame
-        run: >
-          dotnet publish ClickerGame/ClickerGame.csproj
-          -c Release
-          -r win-x64
-          --self-contained true
-          -p:PublishSingleFile=true
-          -o publish/game
-
-      # ── Publish launcher (self-contained, single-file) ────────────────────────
-      - name: Publish ClickerLauncher
-        run: >
-          dotnet publish ClickerLauncher/ClickerLauncher.csproj
-          -c Release
-          -r win-x64
-          --self-contained true
-          -p:PublishSingleFile=true
-          -o publish/launcher
-
-      # ── version.json ──────────────────────────────────────────────────────────
-      # This file is placed in the repo root so the in-game updater can fetch it
-      # from: https://raw.githubusercontent.com/keeiv/RhythmClicker/main/version.json
-      - name: Write version.json
+      - name: Validate game logic
+        run: dotnet run --project tests/RhythmClicker.Tests -c Release
+      - name: Publish portable game and verified descriptor
         shell: pwsh
+        run: ./scripts/Publish-Windows.ps1 -OutputPath publish/game -ArchivePath RhythmClicker.zip -ReleaseTag "${{ github.ref_name }}"
+      - name: Create reviewable draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $tag  = "${{ github.ref_name }}"
-          $repo = "${{ github.repository }}"
-          $obj  = [ordered]@{
-            version      = $tag
-            download_url = "https://github.com/$repo/releases/download/$tag/RhythmClicker.zip"
-          }
-          $obj | ConvertTo-Json | Set-Content -Path version.json -Encoding utf8NoBOM
-          # Also embed a copy inside the game folder so AppPaths.ReadCurrentVersion() works
-          Copy-Item version.json publish/game/version.json
-
-      # ── Package ───────────────────────────────────────────────────────────────
-      - name: Create game ZIP (RhythmClicker.zip)
-        shell: pwsh
-        run: Compress-Archive -Path publish/game/* -DestinationPath RhythmClicker.zip
-
-      - name: Rename launcher executable
-        shell: pwsh
-        run: |
-          $exe = Get-ChildItem publish/launcher/*.exe | Select-Object -First 1
-          if ($exe) {
-            Copy-Item $exe.FullName -Destination RhythmClickerLauncher.exe
-          } else {
-            throw "Launcher exe not found in publish/launcher/"
-          }
-
-      # ── Commit version.json back to main ──────────────────────────────────────
-      - name: Commit version.json to main branch
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add version.json
-          $diff = git diff --cached --quiet; $LASTEXITCODE
-          if ($LASTEXITCODE -ne 0) {
-            git commit -m "chore: bump version.json to ${{ github.ref_name }}"
-            git push origin HEAD:main
-          } else {
-            Write-Host "version.json already up to date, skipping push"
-          }
-
-      # ── GitHub Release ────────────────────────────────────────────────────────
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          files: |
-            RhythmClicker.zip
-            RhythmClickerLauncher.exe
-          body: |
-            ## v0.5 更新內容
-
-            ### 新功能
-
-            - RhythmClicker Launcher — 獨立下載助手，玩家首次使用時透過 Launcher 選擇安裝槽位並下載遊戲
-            - 遊戲內自動更新 — 偵測到新版本後在遊戲內提示，下載完成後詢問是否重啟
-            - 選單按鈕圖示 — 每個選單項目首端顯示對應圖示，提升視覺辨識度
-            - 安裝路徑管理 — 遊戲資料夾統一由 AppPaths 管理，支援 Launcher 指定的安裝槽位
-
-            ### 架構重構
-
-            - Game1.cs 從 3400 行拆分為 16 個 Partial Class 檔案，分置於 Screens/、Audio/、Helpers/ 資料夾
-            - 所有管理器(AccountsManager、StatsDatabase 等)改用 AppPaths 路徑，不再硬寫路徑
-
-            ### 改進
-
-            - 升級至 .NET 8（原 .NET 6 已終止支援）
-            - 新增 GitHub Actions 自動打包並發布 Release 流程
-
-            ### 修復
-
-            - Launcher 啟動遊戲時正確使用執行檔名稱 ClickerGame.exe
-
-            ### 下載
-
-            - `RhythmClicker.zip` — 遊戲本體 (Windows x64，免安裝 .NET)
-            - `RhythmClickerLauncher.exe` — 下載助手 (Windows x64，首次安裝用)
+          $releaseArgs = @('release','create',$env:RELEASE_TAG,'RhythmClicker.zip','RhythmClicker.zip.sha256','RhythmClicker.zip.manifest.json','--draft','--generate-notes')
+          if($env:RELEASE_TAG.Contains('-')) { $releaseArgs += '--prerelease' }
+          gh @releaseArgs
+          if($LASTEXITCODE -ne 0) { throw 'Draft release creation failed.' }

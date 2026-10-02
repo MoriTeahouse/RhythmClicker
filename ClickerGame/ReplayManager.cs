@@ -1,6 +1,12 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace ClickerGame
 {
@@ -14,6 +20,8 @@ namespace ClickerGame
         public string Judgment { get; set; } = ""; // PERFECT/GREAT/GOOD/MISS
         public int ScoreGained { get; set; }
         public int ComboAt { get; set; }
+        public double? NoteTime { get; set; }
+        public double DeltaSeconds { get; set; }
     }
 
     /// <summary>
@@ -21,6 +29,7 @@ namespace ClickerGame
     /// </summary>
     public class ReplayData
     {
+        public string BeatmapHash { get; set; } = "";
         public string SongId { get; set; } = "";
         public string Difficulty { get; set; } = "";
         public string Player { get; set; } = "guest";
@@ -32,6 +41,15 @@ namespace ClickerGame
         public double Accuracy { get; set; }
         public string Grade { get; set; } = "";
         public List<ReplayEvent> Events { get; set; } = new();
+        public void Validate()
+        {
+            if (SongId == null || Difficulty == null || Player == null || Grade == null || BeatmapHash == null || string.IsNullOrWhiteSpace(SongId) || SongId.Length > 256 || Difficulty.Length > 64 || Player.Length > 256 || Grade.Length > 16 || BeatmapHash.Length is not (0 or 64) || Events == null || Events.Count > 500000 || FinalScore < 0 || MaxCombo < 0 || Hit < 0 || Miss < 0 || !double.IsFinite(Accuracy) || Accuracy < 0 || Accuracy > 100)
+                throw new InvalidDataException("Invalid replay summary.");
+            foreach (var item in Events)
+                if (item == null || !float.IsFinite(item.Time) || item.Time < 0 || item.Time > 3602 || item.Column is < 0 or > 3 || item.ScoreGained < 0 || item.ComboAt < 0 || !double.IsFinite(item.DeltaSeconds) || item.NoteTime is double time && (!double.IsFinite(time) || time < 0 || time > 3600) || item.Judgment is not ("PERFECT" or "GREAT" or "GOOD" or "MISS"))
+                    throw new InvalidDataException("Invalid replay event.");
+            if (!Events.Select(e => e.Time).SequenceEqual(Events.Select(e => e.Time).OrderBy(t => t))) throw new InvalidDataException("Replay events are not chronological.");
+        }
     }
 
     /// <summary>
@@ -42,6 +60,7 @@ namespace ClickerGame
         private readonly string _replayDir;
         private List<ReplayEvent> _recording = new();
         private bool _isRecording;
+        private string _chartHash = "";
 
         public ReplayManager(string replayDir = "Replays")
         {
@@ -52,7 +71,15 @@ namespace ClickerGame
         public void StartRecording()
         {
             _recording = new List<ReplayEvent>();
+            _chartHash = "";
             _isRecording = true;
+        }
+        public void StartRecording(Beatmap chart) { StartRecording(); _chartHash = ChartHash(chart); }
+        public static string ChartHash(Beatmap chart) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(chart.Notes.OrderBy(n => n.Time).ThenBy(n => n.Column)))));
+        public void RecordJudgement(double time, int column, string judgment, int scoreGained, int comboAt, double noteTime, double delta)
+        {
+            if (!_isRecording) return;
+            _recording.Add(new() { Time = (float)Math.Max(0, time), Column = column, Judgment = judgment, ScoreGained = scoreGained, ComboAt = comboAt, NoteTime = noteTime, DeltaSeconds = delta });
         }
 
         public void RecordEvent(float time, int column, string judgment, int scoreGained, int comboAt)
@@ -74,6 +101,7 @@ namespace ClickerGame
             _isRecording = false;
             var data = new ReplayData
             {
+                BeatmapHash = _chartHash,
                 SongId = songId,
                 Difficulty = difficulty,
                 Player = player,
@@ -88,7 +116,9 @@ namespace ClickerGame
             };
 
             // Save to .rcp file
-            string fileName = $"{songId}_{difficulty}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.rcp";
+            data.Validate();
+            string prefix = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(songId + "/" + difficulty)))[..16];
+            string fileName = $"{prefix}_{DateTime.UtcNow:yyyyMMdd_HHmmss_fffffff}_{Guid.NewGuid():N}.rcp";
             string path = Path.Combine(_replayDir, fileName);
             RcFileManager.WriteEncrypted(path, data);
 
@@ -99,7 +129,7 @@ namespace ClickerGame
         public ReplayData? GetBestReplay(string songId, string difficulty)
         {
             ReplayData? best = null;
-            string pattern = $"{songId}_{difficulty}_*.rcp";
+            string pattern = "*.rcp";
 
             if (!Directory.Exists(_replayDir)) return null;
 
@@ -108,6 +138,8 @@ namespace ClickerGame
                 try
                 {
                     var data = RcFileManager.ReadEncrypted<ReplayData>(file);
+                    data.Validate();
+                    if (data.SongId != songId || data.Difficulty != difficulty) continue;
                     if (best == null || data.FinalScore > best.FinalScore)
                         best = data;
                 }
@@ -127,6 +159,7 @@ namespace ClickerGame
                 try
                 {
                     var data = RcFileManager.ReadEncrypted<ReplayData>(file);
+                    data.Validate();
                     list.Add((Path.GetFileName(file), data));
                 }
                 catch { }

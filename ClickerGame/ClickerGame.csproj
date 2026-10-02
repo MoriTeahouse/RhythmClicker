@@ -1,31 +1,30 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <RootNamespace>ClickerGame</RootNamespace>
-    <Nullable>enable</Nullable>
-    <LangVersion>latest</LangVersion>
-    <ApplicationIcon>icon.ico</ApplicationIcon>
-    <PublishSingleFile>true</PublishSingleFile>
-    <SelfContained>true</SelfContained>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>ClickerGame</RootNamespace><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion><ApplicationIcon>icon.ico</ApplicationIcon>
+    <Authors>MoriTeahouse</Authors><Copyright>Copyright (c) 2026 MoriTeahouse (森之宿茶室)</Copyright>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <Version>0.6.0</Version><RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>false</PublishSingleFile><SelfContained>false</SelfContained>
+    <EngineRoot Condition="'$(EngineRoot)' == ''">..\lib\MatrixTea-Engine</EngineRoot>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.1.301" />
-    <PackageReference Include="NAudio" Version="2.2.1" />
+    <None Update="icon.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <ProjectReference Include="$(EngineRoot)\src\MatrixTea.Engine.Desktop\MatrixTea.Engine.Desktop.csproj" />
     <PackageReference Include="NAudio.Vorbis" Version="1.5.0" />
     <PackageReference Include="Sdcb.FFmpeg.runtime.windows-x64" Version="7.1.0" />
-    <PackageReference Include="System.Drawing.Common" Version="7.0.0" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="7.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.24" />
     <PackageReference Include="DiscordRichPresence" Version="1.2.1.24" />
     <PackageReference Include="FFMediaToolkit" Version="4.6.0" />
     <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="Assets\\**\\*.*" CopyToOutputDirectory="PreserveNewest" />
-    <!-- Button icons (PNG, 64px) from icon pack — copied next to the exe -->
-    <Content Include="Assets\\Icons\\*.png" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Icons\\*.ico" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="icon.ico" />
+    <None Update="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\NOTICE" Link="NOTICE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\LICENSES\**\*.*" Link="LICENSES\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\docs\PLAYER.md" Link="PLAYER.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

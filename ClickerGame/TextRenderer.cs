@@ -1,69 +1,44 @@
-using System;
-using System.Collections.Generic;
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
 using System.Drawing;
-using System.IO;
-using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-
-namespace ClickerGame
+namespace ClickerGame;
+public sealed class TextRenderer : IDisposable
 {
-    // Simple runtime text renderer that caches generated textures.
-    // Uses System.Drawing to render text into a bitmap and loads it into a Texture2D.
-    public class TextRenderer : IDisposable
+    private sealed class Entry { public required Texture2D Texture; public long Frame; }
+    private readonly GraphicsDevice device;
+    private readonly Dictionary<string, Entry> cache = new();
+    private long frame;
+    public int TextureCount => cache.Count;
+    public long CacheBytes { get; private set; }
+    public TextRenderer(GraphicsDevice graphicsDevice) => device = graphicsDevice;
+    public void BeginFrame() => frame++;
+    // Called after SpriteBatch.End; textures still referenced by the current batch are never disposed mid-draw.
+    public void EndFrame()
     {
-        readonly GraphicsDevice _graphicsDevice;
-        readonly Dictionary<string, Texture2D> _cache = new();
-
-        public TextRenderer(GraphicsDevice graphicsDevice)
+        if (cache.Count <= 384 && CacheBytes <= 32 * 1024 * 1024) return;
+        foreach (var pair in cache.OrderBy(p => p.Value.Frame).ToArray())
         {
-            _graphicsDevice = graphicsDevice;
-        }
-
-        string Key(string text, string fontName, int size, System.Drawing.Color color)
-            => $"{fontName}|{size}|{color.ToArgb():X8}|{text}";
-
-        public Texture2D GetTexture(string text, string fontName, int size, Microsoft.Xna.Framework.Color color)
-        {
-            var sysColor = System.Drawing.Color.FromArgb(color.A, color.R, color.G, color.B);
-            var key = Key(text, fontName, size, sysColor);
-            if (_cache.TryGetValue(key, out var tex)) return tex;
-
-            using var bmp = new Bitmap(1, 1);
-            using (var g = Graphics.FromImage(bmp))
-            {
-                var f = new Font(fontName, size, System.Drawing.FontStyle.Bold, GraphicsUnit.Pixel);
-                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-                var sz = g.MeasureString(text, f);
-                int w = Math.Max(1, (int)Math.Ceiling(sz.Width) + 2);
-                int h = Math.Max(1, (int)Math.Ceiling(sz.Height) + 2);
-                using var real = new Bitmap(w, h);
-                using var gr = Graphics.FromImage(real);
-                gr.Clear(System.Drawing.Color.Transparent);
-                gr.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-                gr.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
-                gr.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                using var brush = new SolidBrush(sysColor);
-                gr.DrawString(text, f, brush, 0f, 0f);
-                using var ms = new MemoryStream();
-                real.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-                ms.Seek(0, SeekOrigin.Begin);
-                tex = Texture2D.FromStream(_graphicsDevice, ms);
-            }
-
-            _cache[key] = tex;
-            return tex;
-        }
-
-        // Ensure a texture is generated and cached for the given text.
-        public void Precache(string text, string fontName, int size, Microsoft.Xna.Framework.Color color)
-        {
-            GetTexture(text, fontName, size, color);
-        }
-
-        public void Dispose()
-        {
-            foreach (var t in _cache.Values) t.Dispose();
-            _cache.Clear();
+            if (cache.Count <= 384 && CacheBytes <= 32 * 1024 * 1024) break;
+            CacheBytes -= pair.Value.Texture.Width * (long)pair.Value.Texture.Height * 4;
+            pair.Value.Texture.Dispose(); cache.Remove(pair.Key);
         }
     }
+    public Texture2D GetTexture(string text, string fontName, int size, Microsoft.Xna.Framework.Color color)
+    {
+        string key = $"{fontName}|{size}|{color.PackedValue}|{text}";
+        if (cache.TryGetValue(key, out var entry)) { entry.Frame = frame; return entry.Texture; }
+        using var font = new Font(fontName, size, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var measureBitmap = new Bitmap(1, 1); using var measure = Graphics.FromImage(measureBitmap);
+        var measured = measure.MeasureString(text, font);
+        using var bitmap = new Bitmap(Math.Max(1, (int)Math.Ceiling(measured.Width) + 3), Math.Max(1, (int)Math.Ceiling(measured.Height) + 3));
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.Clear(Color.Transparent); graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+        using var brush = new SolidBrush(Color.FromArgb(color.A, color.R, color.G, color.B));
+        graphics.DrawString(text, font, brush, 0, 0);
+        using var stream = new MemoryStream(); bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png); stream.Position = 0;
+        var texture = Texture2D.FromStream(device, stream); cache.Add(key, new() { Texture = texture, Frame = frame }); CacheBytes += texture.Width * (long)texture.Height * 4; return texture;
+    }
+    public void Precache(string text, string fontName, int size, Microsoft.Xna.Framework.Color color) => GetTexture(text, fontName, size, color);
+    public void Dispose() { foreach (var entry in cache.Values) entry.Texture.Dispose(); cache.Clear(); CacheBytes = 0; }
 }

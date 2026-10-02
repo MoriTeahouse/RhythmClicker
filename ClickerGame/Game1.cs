@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
 using System;
 using System.IO;
 using System.Diagnostics;
@@ -5,6 +7,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Win32;
+using MatrixTea.Engine.Desktop;
+using MatrixTea.Engine.Core.Rhythm;
+using MatrixTea.Engine.Core.Input;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
@@ -21,7 +26,7 @@ namespace ClickerGame
         GraphicsDeviceManager? graphics;
         SpriteBatch? spriteBatch;
         Texture2D? pixel;
-        int width = 800, height = 600;
+        int width = GameConfig.DefaultWidth, height = GameConfig.DefaultHeight;
         Beatmap? beatmap;
         LinkedList<Note> notes = new();
         SoundEffect? songEffect;
@@ -52,8 +57,8 @@ namespace ClickerGame
         int languageMenuIndex = 0;
 
         // Saved windowed dimensions
-        int windowedWidth = 800;
-        int windowedHeight = 600;
+        int windowedWidth = GameConfig.DefaultWidth;
+        int windowedHeight = GameConfig.DefaultHeight;
 
         TextRenderer? textRenderer;
         Texture2D? circleTexture;
@@ -198,16 +203,13 @@ namespace ClickerGame
         List<HitParticle> particles = new();
         Random rng = new();
 
-        float shakeTimer;
-        float shakeIntensity;
-        float beatPulseAlpha;
         SoundEffect? sfxHit;
 
         // ── Icon Registry ────────────────────────────────────────────
         UI.IconRegistry? _iconRegistry;
 
         // ── Update system ────────────────────────────────────────────
-        float _updateCheckDelay = 5f;   // seconds after launch before first check
+        // float _updateCheckDelay = 5f;   // seconds after launch before first check
         bool  _updatePromptShown = false;
 
         SoundEffect? sfxMiss;
@@ -224,11 +226,10 @@ namespace ClickerGame
         // Video background
         VideoBackgroundPlayer? videoPlayer;
         Texture2D? bgImageTexture;
-        string currentVideoPath = "";
-        string currentBgImagePath = "";
+        // string currentVideoPath = "";
+        // string currentBgImagePath = "";
 
         // Break period tracking
-        bool inBreak = false;
         BreakPeriod? currentBreak = null;
 
         // Combo tier
@@ -258,9 +259,7 @@ namespace ClickerGame
         int HitZoneY => height - HitZoneHeight - 40;
 
         float menuTimer = 0f;
-        int menuScrollOffset = 0;
         bool isFullscreen = false;
-        bool editorMode = false; // legacy playing-editor flag
 
         // ═══════════ Beatmap Editor State ═══════════
         string edSongName = "";
@@ -294,8 +293,9 @@ namespace ClickerGame
             public List<string> Difficulties { get; set; } = new();
         }
 
-        public Game1()
+        public Game1(string[]? arguments = null)
         {
+            runArguments = arguments ?? Array.Empty<string>();
             graphics = new GraphicsDeviceManager(this);
             Content.RootDirectory = "Content";
             graphics.PreferredBackBufferWidth = width;
@@ -305,7 +305,7 @@ namespace ClickerGame
         protected override void Initialize()
         {
             IsMouseVisible = true;
-            Window.Title = "RhythmClicker";
+            Window.Title = "RhythmClicker · MoriTeahouse · 0.6 大更新測試版 · 第一版";
             Window.AllowUserResizing = false;
 
             // Low-latency settings for better hit responsiveness
@@ -317,14 +317,14 @@ namespace ClickerGame
             Window.FileDrop += OnFileDrop;
 
             // Register custom file type icons
-            RegisterFileAssociations();
+            // File associations are opt-in through the installer, not changed at every launch.
 
             base.Initialize();
         }
 
         void OnFileDrop(object? sender, FileDropEventArgs e)
         {
-            if (e.Files == null || e.Files.Length == 0) return;
+            if (e.Files == null || e.Files.Length == 0 || state is GameState.Playing or GameState.ReplayView) return;
             string f = e.Files[0];
             string ext = Path.GetExtension(f).ToLowerInvariant();
 
@@ -474,6 +474,8 @@ namespace ClickerGame
             pixel.SetData(new[] { Color.White });
 
             textRenderer = new TextRenderer(GraphicsDevice);
+            glyphText = new GlyphTextRenderer(GraphicsDevice);
+            using (var logo = File.OpenRead(Path.Combine(AppContext.BaseDirectory, "icon.png"))) brandMark = Texture2D.FromStream(GraphicsDevice, logo);
             circleTexture = CreateCircleTexture(256, Color.White);
             renderCache = new RenderCache(GraphicsDevice);
             keyFlashPool = new ObjectPool<KeyFlash>(() => new KeyFlash(), 16);
@@ -491,7 +493,7 @@ namespace ClickerGame
             EnsureExampleSongs();
 
             string songsMeta = "Assets/songs.json";
-            if (!File.Exists(songsMeta) || !File.Exists("Assets/.audio_v3"))
+            if (!File.Exists(songsMeta))
                 File.WriteAllText(songsMeta, DefaultSongsJson());
             var metaJson = File.ReadAllText(songsMeta);
             songs = System.Text.Json.JsonSerializer.Deserialize<List<SongInfo>>(metaJson,
@@ -503,13 +505,13 @@ namespace ClickerGame
             settingsManager = new SettingsManager(Core.AppPaths.SettingsFilePath);
             achievementManager = new AchievementManager(Core.AppPaths.AchievementsFilePath);
             replayManager = new ReplayManager(Core.AppPaths.ReplaysPath);
-            cloudSync = new CloudSyncManager();
+            cloudSync = IsSmoke ? null : new CloudSyncManager();
 
             // Load local profile data
             LoadLocalProfile();
 
             // Discord RPC
-            try { discordRpc = new DiscordRpcManager(); }
+            try { if (!IsSmoke) discordRpc = new DiscordRpcManager(); }
             catch { discordRpc = null; }
 
             // Menu music
@@ -523,25 +525,24 @@ namespace ClickerGame
                 menuMusicInstance.Volume = settingsManager?.Settings.MusicVolume ?? 0.35f;
             }
             menuMusicInstance.Play();
+            ApplyVolume();
 
             // Load button icons
             _iconRegistry = new UI.IconRegistry(GraphicsDevice);
             _iconRegistry.Load();
 
             // Kick off background update check
-            Systems.UpdateManager.UpdateAvailable += () => { /* update badge handled in Draw */ };
-            Systems.UpdateManager.UpdateReady += OnUpdateReady;
-            Systems.UpdateManager.CheckAsync();
+            if (!IsSmoke) Systems.UpdateManager.CheckAsync();
         }
 
         protected override void UnloadContent()
         {
-            textRenderer?.Dispose();
-            statsDb?.Dispose();
-            discordRpc?.Dispose();
-            videoPlayer?.Dispose();
-            bgImageTexture?.Dispose();
-            _iconRegistry?.Dispose();
+            audioPlayer.Dispose(); glyphText?.Dispose(); textRenderer?.Dispose(); brandMark?.Dispose();
+            statsDb?.Dispose(); discordRpc?.Dispose(); videoPlayer?.Dispose(); bgImageTexture?.Dispose(); _iconRegistry?.Dispose();
+            songInstance?.Dispose(); songEffect?.Dispose(); menuMusicInstance?.Dispose(); menuMusicEffect?.Dispose();
+            sfxHit?.Dispose(); sfxMiss?.Dispose(); edPreviewInstance?.Dispose(); edPreviewEffect?.Dispose();
+            circleTexture?.Dispose(); renderCache?.Dispose(); pixel?.Dispose(); spriteBatch?.Dispose();
+            Window.FileDrop -= OnFileDrop;
             base.UnloadContent();
         }
 
@@ -559,52 +560,10 @@ namespace ClickerGame
                 Systems.UpdateManager.RestartGame();
         }
 
-        string DefaultSongsJson() => @"[
-  { ""Id"": ""song1"", ""Title"": ""Example A"", ""File"": ""song1.wav"", ""Difficulties"": [""easy"", ""hard"", ""difficulty"", ""very_difficulty""] },
-  { ""Id"": ""song2"", ""Title"": ""Example B"", ""File"": ""song2.wav"", ""Difficulties"": [""easy"", ""hard"", ""difficulty""] },
-  { ""Id"": ""song3"", ""Title"": ""Example C"", ""File"": ""song3.wav"", ""Difficulties"": [""easy"", ""hard"", ""difficulty"", ""very_difficulty""] },
-  { ""Id"": ""ba_unwelcome"", ""Title"": ""Unwelcome School"", ""File"": ""ba_unwelcome.wav"", ""Difficulties"": [""easy"", ""hard"", ""difficulty"", ""very_difficulty""] },
-  { ""Id"": ""ba_constant"", ""Title"": ""Constant Moderato"", ""File"": ""ba_constant.wav"", ""Difficulties"": [""easy"", ""hard"", ""difficulty"", ""very_difficulty""] },
-  { ""Id"": ""ba_midsummer"", ""Title"": ""Midsummer Daydream"", ""File"": ""ba_midsummer.wav"", ""Difficulties"": [""easy"", ""hard"", ""difficulty"", ""very_difficulty""] }
-]";
+        string DefaultSongsJson() => System.Text.Json.JsonSerializer.Serialize(
+            Core.DemoLibrary.Ids.Select((id, i) => new SongInfo { Id = id, Title = Core.DemoLibrary.Titles[i], File = id + ".wav", Difficulties = new() { "easy", "hard", "difficulty" } }));
 
-        void EnsureExampleSongs()
-        {
-            string marker = "Assets/.audio_v4";
-            if (File.Exists(marker)) return;
-
-            GenerateMusicalWav("Assets/song1.wav", 8.0f, 120f, 110.0);
-            GenerateMusicalWav("Assets/song2.wav", 6.0f, 130f, 130.8);
-            GenerateMusicalWav("Assets/song3.wav", 10.0f, 100f, 82.4);
-            GenerateMenuMusicWav("Assets/menu_bgm.wav", 20.0f, 95f, 82.4);
-
-            // Blue Archive style songs
-            GenerateBaStyleWav("Assets/ba_unwelcome.wav", 12.0f, 170f, 164.8, 0);  // Bright uptempo pop-rock
-            GenerateBaStyleWav("Assets/ba_constant.wav", 14.0f, 132f, 146.8, 1);   // Smooth piano pop
-            GenerateBaStyleWav("Assets/ba_midsummer.wav", 10.0f, 155f, 196.0, 2);  // Energetic electronic
-
-            string[][] allSongDiffs = {
-                new[] { "easy", "hard", "difficulty", "very_difficulty" },
-                new[] { "easy", "hard", "difficulty" },
-                new[] { "easy", "hard", "difficulty", "very_difficulty" },
-                new[] { "easy", "hard", "difficulty", "very_difficulty" },
-                new[] { "easy", "hard", "difficulty", "very_difficulty" },
-                new[] { "easy", "hard", "difficulty", "very_difficulty" },
-            };
-            float[][] songParams = {
-                new[] { 8.0f, 120f }, new[] { 6.0f, 130f }, new[] { 10.0f, 100f },
-                new[] { 12.0f, 170f }, new[] { 14.0f, 132f }, new[] { 10.0f, 155f },
-            };
-            string[] songIds = { "song1", "song2", "song3", "ba_unwelcome", "ba_constant", "ba_midsummer" };
-
-            for (int si = 0; si < songIds.Length; si++)
-            {
-                foreach (var d in allSongDiffs[si])
-                    WriteBeatmapRcm($"Assets/{songIds[si]}_{d}.rcm", songParams[si][0], songParams[si][1], d);
-            }
-
-            File.WriteAllText(marker, "v4");
-        }
+        void EnsureExampleSongs() => Core.DemoLibrary.Ensure("Assets");
 
         void WriteBeatmapRcm(string path, float dur, float bpm, string diff)
         {
@@ -622,7 +581,7 @@ namespace ClickerGame
             }
             var s = songs[Math.Clamp(currentSongIndex, 0, songs.Count - 1)];
             string songPath = Path.Combine("Assets", s.File);
-            if (!File.Exists(songPath)) GenerateMusicalWav(songPath, 6.0f);
+            if (!File.Exists(songPath)) throw new FileNotFoundException("Song audio is missing; source files are never overwritten.", songPath);
 
             string rcmPath = Path.Combine("Assets", s.Id + "_" + currentDifficulty + ".rcm");
             string jsonPath = Path.Combine("Assets", s.Id + "_" + currentDifficulty + ".json");
@@ -645,50 +604,21 @@ namespace ClickerGame
         }
 
         void LoadSongRcm(string songFilePath, string rcmPath)
-        {
-            beatmap = RcFileManager.ReadBeatmap(rcmPath);
-            notes = new LinkedList<Note>(beatmap.Notes ?? new List<Note>());
-            maxScore = (beatmap?.Notes?.Count ?? 0) * 100;
-            songInstance?.Stop(); songInstance?.Dispose(); songEffect = null;
-            try
-            {
-                using (var fs = File.OpenRead(songFilePath))
-                { songEffect = SoundEffect.FromStream(fs); songInstance = songEffect.CreateInstance(); }
-            }
-            catch
-            {
-                // Audio file is not WAV or corrupted — generate fallback
-                float dur = (beatmap?.Notes?.Count > 0) ? beatmap.Notes.Max(n => n.Time) + 2f : 6f;
-                GenerateMusicalWav(songFilePath, dur, beatmap?.Bpm ?? 120f);
-                using (var fs = File.OpenRead(songFilePath))
-                { songEffect = SoundEffect.FromStream(fs); songInstance = songEffect.CreateInstance(); }
-            }
-            songDurationSeconds = songEffect?.Duration.TotalSeconds ?? 0.0;
-        }
+        { beatmap = RcFileManager.ReadBeatmap(rcmPath); PrepareAudioAndChart(songFilePath); }
 
         void LoadSong(string songFilePath, string beatmapPath)
-        {
-            var json = File.ReadAllText(beatmapPath);
-            beatmap = Beatmap.LoadFromString(json);
-            notes = new LinkedList<Note>(beatmap.Notes ?? new List<Note>());
-            maxScore = (beatmap?.Notes?.Count ?? 0) * 100;
-            songInstance?.Stop(); songInstance?.Dispose(); songEffect = null;
-            try
-            {
-                using (var fs = File.OpenRead(songFilePath))
-                { songEffect = SoundEffect.FromStream(fs); songInstance = songEffect.CreateInstance(); }
-            }
-            catch
-            {
-                float dur = (beatmap?.Notes?.Count > 0) ? beatmap.Notes.Max(n => n.Time) + 2f : 6f;
-                GenerateMusicalWav(songFilePath, dur, beatmap?.Bpm ?? 120f);
-                using (var fs = File.OpenRead(songFilePath))
-                { songEffect = SoundEffect.FromStream(fs); songInstance = songEffect.CreateInstance(); }
-            }
-            songDurationSeconds = songEffect?.Duration.TotalSeconds ?? 0.0;
-        }
+        { beatmap = Beatmap.LoadFromString(File.ReadAllText(beatmapPath)); PrepareAudioAndChart(songFilePath); }
 
-        // CreateCircleTexture → Helpers/Game1.Helpers.cs
+        void PrepareAudioAndChart(string songFilePath)
+        {
+            beatmap!.NormalizeLegacyMetadata(); beatmap.Validate();
+            notes = new LinkedList<Note>(beatmap.Notes.OrderBy(n => n.Time));
+            playRun = new Core.PlayRun(beatmap); maxScore = playRun.MaxScore;
+            songInstance?.Stop(); songInstance?.Dispose(); songInstance = null;
+            songEffect?.Dispose(); songEffect = null;
+            audioPlayer.Load(songFilePath);
+            songDurationSeconds = Math.Max(audioPlayer.DurationSeconds, playRun.LastNoteTime + GameConfig.MissWindow + 0.3);
+        }
 
         // ═══════════════════════════════════════════════════════════════
         // UPDATE
@@ -698,6 +628,18 @@ namespace ClickerGame
         {
             kb = Keyboard.GetState();
             mouseState = Mouse.GetState();
+            while (uiActions.TryDequeue(out var action)) action();
+            if (state is GameState.Playing or GameState.ReplayView && !IsActive && !IsSmoke) PauseRound();
+            if (_paused)
+            {
+                if (IsActive && Pressed(Keys.Space)) ResumeRound();
+                else if (Pressed(Keys.Escape)) { _paused = false; ReturnToMenu(); }
+                RememberInput(); base.Update(gameTime); return;
+            }
+            if (state is GameState.Playing or GameState.ReplayView && Pressed(Keys.Space)) { PauseRound(); RememberInput(); return; }
+            if (_calibrating) { UpdateCalibration(); RememberInput(); return; }
+            if (!IsActive && !IsSmoke) { RememberInput(); base.Update(gameTime); return; }
+            UpdateSmoke(gameTime);
 
             // F11 fullscreen toggle
             if (kb.IsKeyDown(Keys.F11) && !prevKb.IsKeyDown(Keys.F11))
@@ -706,12 +648,13 @@ namespace ClickerGame
                 else { EnterBorderlessFullscreen(); isFullscreen = true; }
             }
 
+            if (state == GameState.Settings && settingsBindingMode && Pressed(Keys.Escape)) { settingsBindingMode = false; RememberInput(); return; }
             // Escape handling
             if (kb.IsKeyDown(Keys.Escape) && !prevKb.IsKeyDown(Keys.Escape))
             {
-                if (state == GameState.Playing)
+                if (state is GameState.Playing or GameState.ReplayView)
                 {
-                    songInstance?.Stop(); stopwatch.Stop(); videoPlayer?.Stop();
+                    audioPlayer.Stop(); songInstance?.Stop(); stopwatch.Stop(); videoPlayer?.Stop();
                     state = GameState.Menu; ExitBorderlessFullscreen();
                     menuMusicInstance?.Play(); discordRpc?.SetMenu();
                 }
@@ -724,7 +667,7 @@ namespace ClickerGame
                       || state == GameState.Stats || state == GameState.BeatmapEditor
                       || state == GameState.Settings || state == GameState.Achievements
                       || state == GameState.ReplayView || state == GameState.Profile
-                      || state == GameState.SearchPlayer)
+                      || state == GameState.SearchPlayer || state == GameState.EditProfile)
                 {
                     if (state == GameState.BeatmapEditor)
                     { edPreviewInstance?.Stop(); edPreviewing = false; }
@@ -783,23 +726,17 @@ namespace ClickerGame
         {
             GraphicsDevice.Clear(new Color(10, 10, 25));
 
+            textRenderer?.BeginFrame();
             spriteBatch!.Begin();
             DrawBackground();
             if (state == GameState.Playing)
             {
                 if (ComboTier > 0)
                     spriteBatch.Draw(pixel!, new Rectangle(0, 0, width, height), TierGlowColor[ComboTier] * (0.03f + ComboTier * 0.018f));
-                if (beatPulseAlpha > 0.01f)
-                    spriteBatch.Draw(pixel!, new Rectangle(0, 0, width, height), TierGlowColor[ComboTier] * (beatPulseAlpha * 0.08f));
             }
             spriteBatch.End();
 
-            Matrix xform = Matrix.Identity;
-            if (state == GameState.Playing && shakeTimer > 0)
-                xform = Matrix.CreateTranslation((float)(rng.NextDouble() - 0.5) * shakeIntensity * 4f,
-                    (float)(rng.NextDouble() - 0.5) * shakeIntensity * 4f, 0f);
-
-            spriteBatch.Begin(transformMatrix: state == GameState.Playing ? xform : Matrix.Identity);
+            spriteBatch.Begin();
             switch (state)
             {
                 case GameState.Playing: DrawGameplay(gameTime); break;
@@ -839,7 +776,11 @@ namespace ClickerGame
                 spriteBatch.Draw(syncTex, new Vector2(width - syncTex.Width - 12, height - 30), Color.White * alpha);
             }
 
+            if (_paused) DrawPauseOverlay();
+            if (_calibrating) DrawCalibrationOverlay();
             spriteBatch.End();
+            textRenderer?.EndFrame();
+            CaptureSmoke();
             base.Draw(gameTime);
         }
 

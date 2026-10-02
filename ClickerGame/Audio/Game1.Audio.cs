@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
 using System;
 using System.IO;
+using System.Linq;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework.Audio;
 using ClickerGame;
@@ -268,7 +271,7 @@ namespace ClickerGame
                 default: interval = bs; dc = 0.0; tc = 0.0; break;
             }
             var nl = new List<Note>();
-            var r = new Random((int)(bpm * 100 + duration * 7 + diff.GetHashCode()));
+            var r = new Random((int)(bpm * 100 + duration * 7 + diff.Aggregate(17, (hash, ch) => unchecked(hash * 31 + ch))));
             for (float t = bs; t < duration - 0.5f; t += interval)
             {
                 int col = r.Next(4);
@@ -276,7 +279,7 @@ namespace ClickerGame
                 if (r.NextDouble() < dc) nl.Add(new Note { Time = (float)Math.Round(t, 3), Column = (col + 1 + r.Next(3)) % 4 });
                 if (r.NextDouble() < tc) nl.Add(new Note { Time = (float)Math.Round(t, 3), Column = (col + 2) % 4 });
             }
-            return new Beatmap { Notes = nl };
+            return new Beatmap { Bpm = bpm, Author = "MoriTeahouse", Notes = nl };
         }
     }
 }

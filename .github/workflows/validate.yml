@@ -1,0 +1,23 @@
+name: RhythmClicker validation
+on:
+  push:
+    branches: ['main', 'codex/**']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build canonical entry
+        run: dotnet build ClickerGame/ClickerGame.csproj -c Release -warnaserror
+      - name: Build compatibility entry
+        run: dotnet build ClickerGame.csproj -c Release -warnaserror
+      - name: Run logic regressions
+        run: dotnet run --project tests/RhythmClicker.Tests -c Release

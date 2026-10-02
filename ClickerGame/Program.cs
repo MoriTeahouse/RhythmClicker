@@ -1,15 +1,33 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
 using System;
-using Microsoft.Xna.Framework;
-
-namespace ClickerGame
+using System.IO;
+using System.Linq;
+namespace ClickerGame;
+public static class Program
 {
-    public static class Program
+    [STAThread]
+    public static int Main(string[] args)
     {
-        [STAThread]
-        static void Main()
+        string? data = Value(args, "--data-root") ?? Environment.GetEnvironmentVariable("RHYTHMCLICKER_DATA_ROOT");
+        if (data != null) Core.AppPaths.InstallRoot = Path.GetFullPath(data);
+        Core.AppPaths.EnsureDirectories();
+        // Seed content only when missing; user charts and song catalog are never overwritten.
+        string shipped = Path.Combine(AppContext.BaseDirectory, "Assets");
+        if (Directory.Exists(shipped))
+            foreach (string source in Directory.EnumerateFiles(shipped, "*", SearchOption.AllDirectories))
+            {
+                string target = Path.Combine(Core.AppPaths.AssetsPath, Path.GetRelativePath(shipped, source));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                if (!File.Exists(target)) File.Copy(source, target);
+            }
+        Directory.SetCurrentDirectory(Core.AppPaths.InstallRoot);
+        try { using var game = new Game1(args); game.Run(); return 0; }
+        catch (Exception ex)
         {
-            using var game = new Game1();
-            game.Run();
+            File.WriteAllText(Path.Combine(Core.AppPaths.InstallRoot, "crash.log"), ex.ToString());
+            Console.Error.WriteLine(ex); return 1;
         }
     }
+    private static string? Value(string[] args, string key) { int i = Array.IndexOf(args, key); return i >= 0 && i + 1 < args.Length ? args[i + 1] : null; }
 }

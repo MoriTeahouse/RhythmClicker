@@ -1,0 +1,35 @@
+name: Update published stable feed
+on:
+  release:
+    types: [published]
+permissions:
+  contents: write
+jobs:
+  feed:
+    if: github.event.release.prerelease == false
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - name: Verify published archive and update descriptor
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_REPO: ${{ github.repository }}
+        run: |
+          gh release download $env:RELEASE_TAG --pattern RhythmClicker.zip --dir artifacts/released
+          if($LASTEXITCODE -ne 0) { throw 'Published game archive is missing.' }
+          $version = [Version]::Parse($env:RELEASE_TAG.TrimStart('v')).ToString()
+          $hash = (Get-FileHash artifacts/released/RhythmClicker.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          @{version=$version;download_url="https://github.com/$env:RELEASE_REPO/releases/download/$env:RELEASE_TAG/RhythmClicker.zip";sha256=$hash} | ConvertTo-Json | Set-Content version.json -Encoding utf8NoBOM
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add version.json
+          git diff --cached --quiet
+          if($LASTEXITCODE -eq 0) { exit 0 }
+          git commit -m "Update verified release feed for $env:RELEASE_TAG"
+          if($LASTEXITCODE -ne 0) { throw 'Feed commit failed.' }
+          git push origin HEAD:main
+          if($LASTEXITCODE -ne 0) { throw 'Feed push failed.' }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 MoriTeahouse (森之宿茶室)
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -22,15 +24,18 @@ namespace ClickerGame
         public static List<(Beatmap beatmap, string diffLabel)> ImportOsz(string oszPath, string assetsDir, string? songId = null)
         {
             var results = new List<(Beatmap, string)>();
-            string tempDir = Path.Combine(Path.GetTempPath(), "rc_osz_" + Path.GetFileNameWithoutExtension(oszPath));
-            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            string assetsRoot = Path.GetFullPath(assetsDir);
+            Directory.CreateDirectory(assetsRoot);
+            string tempDir = Path.Combine(assetsRoot, ".import-" + Guid.NewGuid().ToString("N"));
+            songId = songId == null ? null : new string(songId.Where(c=>char.IsLetterOrDigit(c)||c is '_' or '-').Take(128).ToArray());
 
             try
             {
+                ValidateArchive(oszPath, tempDir);
                 ZipFile.ExtractToDirectory(oszPath, tempDir);
 
                 // Find all .osu files
-                var osuFiles = Directory.GetFiles(tempDir, "*.osu");
+                var osuFiles = Directory.GetFiles(tempDir, "*.osu", SearchOption.AllDirectories);
                 if (osuFiles.Length == 0) return results;
 
                 string? audioFileCopied = null;
@@ -52,7 +57,7 @@ namespace ClickerGame
                     // Copy audio once (convert to WAV if needed), use unique name per song
                     if (audioFileCopied == null && !string.IsNullOrEmpty(bm.AudioFile))
                     {
-                        string audioSrc = Path.Combine(tempDir, bm.AudioFile);
+                        string audioSrc = ContainedMedia(tempDir, Path.GetDirectoryName(osuFile)!, bm.AudioFile);
                         if (File.Exists(audioSrc))
                         {
                             // Use songId as prefix to avoid collision (e.g. multiple songs with "audio.mp3")
@@ -68,7 +73,7 @@ namespace ClickerGame
                     // Copy video file once
                     if (videoFileCopied == null && !string.IsNullOrEmpty(bm.VideoFile))
                     {
-                        string videoSrc = Path.Combine(tempDir, bm.VideoFile);
+                        string videoSrc = ContainedMedia(tempDir, Path.GetDirectoryName(osuFile)!, bm.VideoFile);
                         if (File.Exists(videoSrc))
                         {
                             string prefix = !string.IsNullOrEmpty(songId) ? songId + "_" : "";
@@ -83,7 +88,7 @@ namespace ClickerGame
                     // Copy background image once
                     if (bgImageCopied == null && !string.IsNullOrEmpty(bm.BackgroundImage))
                     {
-                        string bgSrc = Path.Combine(tempDir, bm.BackgroundImage);
+                        string bgSrc = ContainedMedia(tempDir, Path.GetDirectoryName(osuFile)!, bm.BackgroundImage);
                         if (File.Exists(bgSrc))
                         {
                             string prefix = !string.IsNullOrEmpty(songId) ? songId + "_" : "";
@@ -105,7 +110,7 @@ namespace ClickerGame
             }
             finally
             {
-                try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { }
+                try { if (tempDir.StartsWith(assetsRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) && Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch (IOException) { }
             }
 
             return results;
@@ -113,6 +118,7 @@ namespace ClickerGame
 
         public static Beatmap Import(string osuFilePath)
         {
+            if(new FileInfo(osuFilePath).Length>32*1024*1024)throw new InvalidDataException("Beatmap exceeds size limit.");
             var lines = File.ReadAllLines(osuFilePath);
             var bm = new Beatmap();
             string section = "";
@@ -175,6 +181,8 @@ namespace ClickerGame
                 }
             }
 
+            if(hitObjects.Count>200000 || hitObjects.Any(o=>!double.IsFinite(o.Time)||!double.IsFinite(o.EndTime)||!double.IsFinite(o.SliderLength)||o.Time<0||o.Time>3600000||o.EndTime<0||o.EndTime>3600000||o.RepeatCount<0||o.RepeatCount>1000||o.SliderLength<0||o.SliderLength>1000000)||timingPoints.Any(t=>!double.IsFinite(t.offset)||!double.IsFinite(t.beatLength)||t.beatLength==0))
+                throw new InvalidDataException("Invalid beatmap timing or object count.");
             // Determine BPM from first uninherited timing point
             var mainTiming = timingPoints.FirstOrDefault(tp => !tp.inherited);
             if (mainTiming.beatLength > 0)
@@ -195,9 +203,31 @@ namespace ClickerGame
             // Auto-detect break periods from note gaps (if none parsed from [Events])
             AutoDetectBreaks(bm);
 
+            bm.Validate();
             return bm;
         }
 
+        private static string ContainedMedia(string root,string folder,string name)
+        {
+            if(Path.IsPathRooted(name)||name.Contains(':'))throw new InvalidDataException("Media path must be inside the imported package.");
+            string path=Path.GetFullPath(Path.Combine(folder,name.Replace('\\',Path.DirectorySeparatorChar)));
+            if(!path.StartsWith(root+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Escaping media path.");
+            return path;
+        }
+        private static void ValidateArchive(string archive,string destination)
+        {
+            using var zip=ZipFile.OpenRead(archive);long total=0;
+            if(zip.Entries.Count>10000)throw new InvalidDataException("Too many package entries.");
+            var names=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach(var entry in zip.Entries)
+            {
+                string name=entry.FullName.Replace('\\','/');
+                total=checked(total+entry.Length);
+                if(total>1024L*1024*1024||entry.Length>512L*1024*1024||name.StartsWith('/')||name.Contains(':')||name.Split('/').Any(p=>p is "." or "..")||((entry.ExternalAttributes>>16)&0xF000)==0xA000||!names.Add(name))
+                    throw new InvalidDataException("Unsafe or oversized package.");
+                _=ContainedMedia(destination,destination,name);
+            }
+        }
         static void ParseTimingPoint(string line, List<(double offset, double beatLength, bool inherited)> list)
         {
             var parts = line.Split(',');
