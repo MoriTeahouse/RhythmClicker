@@ -12,6 +12,11 @@ public static class Program
         string? data = Value(args, "--data-root") ?? Environment.GetEnvironmentVariable("RHYTHMCLICKER_DATA_ROOT");
         if (data != null) Core.AppPaths.InstallRoot = Path.GetFullPath(data);
         Core.AppPaths.EnsureDirectories();
+        if (args.Contains("--check-environment"))
+        {
+            try { using var probe = new EnvironmentProbe(); probe.Run(); Console.WriteLine("RHYTHMCLICKER_ENVIRONMENT_OK graphics=OpenGL audio=OpenAL+WaveOut runtime=app-local"); return 0; }
+            catch (Exception ex) { Console.Error.WriteLine(ex); File.WriteAllText(Path.Combine(Core.AppPaths.InstallRoot, "environment-error.txt"), ex.ToString()); return 1; }
+        }
         // Seed content only when missing; user charts and song catalog are never overwritten.
         string shipped = Path.Combine(AppContext.BaseDirectory, "Assets");
         if (Directory.Exists(shipped))

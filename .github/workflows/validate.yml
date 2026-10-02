@@ -21,3 +21,7 @@ jobs:
         run: dotnet build ClickerGame.csproj -c Release -warnaserror
       - name: Run logic regressions
         run: dotnet run --project tests/RhythmClicker.Tests -c Release
+      - name: Build dedicated launcher
+        run: dotnet build src/RhythmClicker.Launcher -c Release -warnaserror
+      - name: Run installation and release regressions
+        run: dotnet run --project tests/RhythmClicker.Launcher.Tests -c Release

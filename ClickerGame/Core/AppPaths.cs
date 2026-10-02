@@ -13,7 +13,7 @@ namespace ClickerGame.Core
     public static class AppPaths
     {
         public const string AppName = "RhythmClicker";
-        public const string CurrentVersion = "0.6.0";
+        public const string CurrentVersion = "0.6.1";
 
         private static string? _installRoot;
 
@@ -22,6 +22,17 @@ namespace ClickerGame.Core
             get
             {
                 if (_installRoot != null) return _installRoot;
+
+                string storage = Path.Combine(AppContext.BaseDirectory, "rhythmclicker-storage.json");
+                if (File.Exists(storage))
+                {
+                    if (new FileInfo(storage).Length > 4096) throw new InvalidDataException("Storage marker is too large.");
+                    using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(storage));
+                    string? relative = json.RootElement.GetProperty("dataDirectory").GetString();
+                    if (relative != "../../UserData") throw new InvalidDataException("Unsupported storage marker.");
+                    _installRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, relative));
+                    return _installRoot;
+                }
 
                 // Launcher writes install_path.txt next to the executable.
                 string marker = Path.Combine(AppContext.BaseDirectory, "install_path.txt");

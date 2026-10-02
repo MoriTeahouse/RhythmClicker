@@ -3,6 +3,7 @@
     <OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier><SelfContained>false</SelfContained>
     <AssemblyName>RhythmClicker.Compatibility</AssemblyName>
+    <ApplicationIcon>ClickerGame/icon.ico</ApplicationIcon>
   </PropertyGroup>
-  <ItemGroup><Compile Include="Program.cs" /><ProjectReference Include="ClickerGame\ClickerGame.csproj" /></ItemGroup>
+  <ItemGroup><Compile Include="Program.cs" /><EmbeddedResource Include="ClickerGame/icon.bmp" LogicalName="Icon.bmp" /><ProjectReference Include="ClickerGame\ClickerGame.csproj" /></ItemGroup>
 </Project>

@@ -63,7 +63,7 @@ public partial class Game1
         DrawMark(48, 35, 44); Label("MORI TEAHOUSE  /  MATRIXTEA", 106, 48, 16, Jade);
         Label("Rhythm", 45, 108, 54); Label("Clicker", 45, 166, 54, Jade);
         Label("循著節拍，找到自己的節奏。", 48, 249, 18, Muted);
-        Label("0.6  ·  大更新測試版 · 第一版", 48, 282, 14, Gold);
+        Label("0.6.1  ·  大更新測試版 · 第二版", 48, 282, 14, Gold);
         if(Systems.UpdateManager.IsUpdateAvailable)
             Label(Systems.UpdateManager.IsDownloading ? $"更新下載 {Systems.UpdateManager.DownloadProgress:P0}" : "U 下載／啟動更新 "+Systems.UpdateManager.AvailableVersion, 470, 108, 16, Gold);
         for (int i = 0; i < menuKeys.Length; i++)

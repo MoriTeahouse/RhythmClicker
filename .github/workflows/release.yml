@@ -16,16 +16,21 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Validate game logic
         run: dotnet run --project tests/RhythmClicker.Tests -c Release
+      - name: Validate launcher installation
+        run: dotnet run --project tests/RhythmClicker.Launcher.Tests -c Release
       - name: Publish portable game and verified descriptor
         shell: pwsh
-        run: ./scripts/Publish-Windows.ps1 -OutputPath publish/game -ArchivePath RhythmClicker.zip -ReleaseTag "${{ github.ref_name }}"
+        run: ./scripts/Publish-Windows.ps1 -OutputPath publish/game -ArchivePath RhythmClicker.zip -AtrPath RhythmClicker.atr -ReleaseTag "${{ github.ref_name }}"
+      - name: Publish dedicated launcher
+        shell: pwsh
+        run: ./scripts/Publish-Launcher.ps1 -OutputPath publish/launcher -ArchivePath RhythmClickerLauncher.zip
       - name: Create reviewable draft release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $releaseArgs = @('release','create',$env:RELEASE_TAG,'RhythmClicker.zip','RhythmClicker.zip.sha256','RhythmClicker.zip.manifest.json','--draft','--generate-notes')
+          $releaseArgs = @('release','create',$env:RELEASE_TAG,'RhythmClicker.zip','RhythmClicker.zip.sha256','RhythmClicker.zip.manifest.json','RhythmClicker.atr','RhythmClicker.atr.sha256','rhythmclicker-release.json','RhythmClickerLauncher.zip','RhythmClickerLauncher.zip.sha256','--draft','--generate-notes')
           if($env:RELEASE_TAG.Contains('-')) { $releaseArgs += '--prerelease' }
           gh @releaseArgs
           if($LASTEXITCODE -ne 0) { throw 'Draft release creation failed.' }

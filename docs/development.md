@@ -12,6 +12,9 @@ RhythmClicker 由 MoriTeahouse（森之宿茶室）開發。公開原創程式�
 | ClickerGame/Systems | 驗證更新、Unicode 原生函式庫載入 |
 | lib/MatrixTea-Engine | 固定版本的共用引擎 |
 | tests/RhythmClicker.Tests | 不建立圖形視窗的回歸 |
+| src/RhythmClicker.Launcher.Core | 公開發布查詢、驗證安裝、環境部署與版本指標 |
+| src/RhythmClicker.Launcher | 專屬 Windows WPF 啟動器 |
+| tests/RhythmClicker.Launcher.Tests | 下載、取消、路徑、ATR、存檔及版本回歸 |
 | ClickerServer / ClickerLauncher | 既有選用服務與下載助手 |
 
 根目錄的舊重複遊戲程式已移除，原始修訂仍在 Git 歷史；根專案只轉呼叫正式入口。bin／obj 與執行資料不納入版本控制。個別遊戲專案建置不要求啟動伺服器。
@@ -27,6 +30,10 @@ PlayRun 使用引擎欄位索引；不得在演奏中改寫音符時間／欄位
 ## 檔案與資源
 
 所有持久資料由 AppPaths 或 --data-root 決定。預設執行檔旁 UserData；完整路徑 marker、命令列與環境變數可選擇安裝磁碟。首次啟動只補足缺少的示範曲／譜面；不覆寫使用者編輯。
+
+專屬啟動器與新版直接啟動使用同一份安裝根目錄 `UserData`。相對 storage marker 優先於舊絕對 marker；命令列與環境變數優先於兩者。執行環境探針不載入帳號、雲端、RPC、曲庫或玩家統計。下載、解封裝與探針暫存均在所選硬碟，啟動器的路徑偏好另存在 LocalAppData。完整安裝約定見 [啟動器指南](launcher.md)。
+
+`ApplicationIcon` 使用 README SVG 直接生成的 ICO；MonoGame DesktopGL 視窗由入口組件的 `ClickerGame.Icon.bmp`（相容入口為 `Icon.bmp`）資源取圖，避免 EXE 圖標更新但視窗仍使用 MonoGame 預設圖標。PNG、BMP 與 ICO 必須從同一 SVG 生成，不以近似繪圖覆寫。
 
 RC／RCM／RCP 原格式維持相容，寫入採同目錄原子替換並保留 .bak。固定金鑰 AES-CBC 只提供格式混淆，不能當成帳號資訊的強安全邊界。設定損壞可讀上一份備份。OSZ 匯入限制路徑、檔案數與展開大小，以選定資料目錄中的唯一 staging 避免同名匯入互相刪除。
 

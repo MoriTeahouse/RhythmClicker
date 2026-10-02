@@ -1,13 +1,19 @@
 # RhythmClicker
 <img src="ClickerGame/icon.svg" alt="RhythmClicker" width="96" />
 
-RhythmClicker 由 **MoriTeahouse（森之宿茶室）** 開發，是採 AGPL-3.0-only 的四軌落鍵音遊。0.6 是大更新測試版第一版：茶室風格介面、原創三曲九張譜面、裝置播放位置判定、倒數、暫停、延遲校正、練習模式及精確重播。
+RhythmClicker 由 **MoriTeahouse（森之宿茶室）** 開發，是採 AGPL-3.0-only 的四軌落鍵音遊。0.6.1-test.2 是大更新測試版第二版：加入精美專屬啟動器、公開 GitHub 更新、ZIP／ATR 安裝與實際執行環境檢查；遊戲、視窗、工作列與啟動器使用本頁 SVG 直接轉換的圖標。延續茶室介面、原創三曲九張譜面、裝置位置判定、倒數、暫停、校正、練習與精確重播。
+
+## 專屬啟動器
+
+從 [公開發布](https://github.com/MoriTeahouse/RhythmClicker/releases) 下載並解壓縮整份 `RhythmClickerLauncher.zip`，執行 `RhythmClickerLauncher.exe`。選擇安裝硬碟／資料夾，再下載遊戲；免登入、免另裝 .NET。遊戲、執行環境、玩家資料與下載暫存使用所選硬碟。更新驗證完成才啟用，失敗或取消保留原版與玩家資料。
+
+支援測試版與正式版頻道、本機 ZIP／ATR 安裝、啟動遊戲及開啟資料目錄。詳見 [啟動器指南](docs/launcher.md)。
 
 ## 執行
 
 Windows x64 的自包含發布包可直接執行 `ClickerGame.exe`，已包含 .NET 執行環境與所需原生函式庫。需要相容 MonoGame DesktopGL 的圖形驅動；首次啟動會產生原創演示音訊。
 
-預設使用執行檔旁的 `UserData`；遊戲、存檔、曲庫、帳號、統計與重播可在同一個安裝磁碟。啟動器可指定 `--data-root <完整路徑>`，或使用 `RHYTHMCLICKER_DATA_ROOT`；既有 `install_path.txt` 的完整路徑仍有效。舊資料可用同一參數指定原有目錄，無須覆寫曲庫。
+獨立執行預設使用 EXE 旁 `UserData`；啟動器安裝則統一使用安裝根目錄的 `UserData`，曲庫、帳號、統計與重播不隨版本切換。優先使用 `--data-root <完整路徑>` 或 `RHYTHMCLICKER_DATA_ROOT`，其次為可隨整個資料夾搬移的相對 marker，既有 `install_path.txt` 仍相容。舊資料可用同一參數指定原有目錄，無須覆寫曲庫。
 
 | 操作 | 功能 |
 |---|---|

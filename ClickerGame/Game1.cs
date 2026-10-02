@@ -305,7 +305,7 @@ namespace ClickerGame
         protected override void Initialize()
         {
             IsMouseVisible = true;
-            Window.Title = "RhythmClicker · MoriTeahouse · 0.6 大更新測試版 · 第一版";
+            Window.Title = "RhythmClicker · MoriTeahouse · 0.6.1 大更新測試版 · 第二版";
             Window.AllowUserResizing = false;
 
             // Low-latency settings for better hit responsiveness
